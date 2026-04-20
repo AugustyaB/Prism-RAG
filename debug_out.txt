@@ -1,0 +1,8 @@
+17:49:48 | INFO     | src.utils.logging:setup_logging:37 | Logging initialized at level: INFO
+17:49:48 | INFO     | src.ingestion.pipeline:process_pdf:65 | Starting ingestion for test_doc.pdf
+17:49:48 | INFO     | src.ingestion.pdf_parser:load:82 | Loaded PDF: test_doc.pdf (3 pages, hash: 7e431be54202...)
+17:49:48 | INFO     | src.ingestion.pdf_parser:iter_pages:144 | Iterating 3 pages of test_doc.pdf
+17:49:49 | WARNING  | src.ingestion.ocr:__init__:42 | GPU requested, but Torch is not compiled with CUDA. Falling back to CPU.
+17:49:50 | INFO     | src.ingestion.ocr:reader:51 | Initializing EasyOCR (GPU=False, languages=['en'])
+Using CPU. Note: This module is much faster with a GPU.
+17:49:52 | INFO     | src.ingestion.ocr:reader:62 | EasyOCR initialized successfully

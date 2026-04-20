@@ -1,0 +1,28 @@
+18:25:54 | INFO     | src.utils.logging:setup_logging:37 | Logging initialized at level: INFO
+18:25:57 | INFO     | src.database.vector_store:__init__:29 | Connecting to Qdrant at data\vectordb
+18:25:57 | INFO     | src.embeddings.embedder:model:71 | Loading embedding model 'BAAI/bge-small-en-v1.5' on device 'cuda'
+18:26:06 | INFO     | src.embeddings.embedder:model:82 | Embedding model loaded successfully
+18:26:06 | INFO     | src.database.vector_store:__init__:51 | Connected to collection 'rag_documents' (chunks: 3)
+18:26:06 | INFO     | src.ingestion.pipeline:process_pdf:65 | Starting ingestion for test_doc.pdf
+18:26:06 | INFO     | src.ingestion.pdf_parser:load:82 | Loaded PDF: test_doc.pdf (3 pages, hash: 7e431be54202...)
+18:26:06 | INFO     | src.ingestion.pdf_parser:iter_pages:144 | Iterating 3 pages of test_doc.pdf
+18:26:06 | INFO     | src.ingestion.ocr:reader:51 | Initializing EasyOCR (GPU=True, languages=['en'])
+18:26:08 | INFO     | src.ingestion.ocr:reader:62 | EasyOCR initialized successfully
+18:26:09 | INFO     | src.ingestion.pdf_parser:iter_pages:169 | Finished iterating test_doc.pdf
+18:26:09 | INFO     | src.ingestion.chunker:chunk_pages:217 | Chunked 3 pages into 3 chunks (avg size: 403 chars)
+18:26:09 | INFO     | src.ingestion.pipeline:process_pdf:135 | Completed ingestion for test_doc.pdf ù Chunks: 3, Errors: 0
+Initializing Embedding Model and Vector DB...
+Traceback (most recent call last):
+  File "E:\GitHub\RAG_Pipeline\ingest.py", line 86, in <module>
+    main()
+    ~~~~^^
+  File "E:\GitHub\RAG_Pipeline\ingest.py", line 51, in main
+    _print_summary(result)
+    ~~~~~~~~~~~~~~^^^^^^^^
+  File "E:\GitHub\RAG_Pipeline\ingest.py", line 75, in _print_summary
+    print(f"\n\u2705 Result for: {result.source_pdf}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Augustya\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 2: character maps to <undefined>

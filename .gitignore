@@ -1,0 +1,35 @@
+# GSD Framework
+.gsd/
+.agent/
+.claude/
+.gemini/
+adapters/
+docs/
+scripts/
+PROJECT_RULES.md
+GSD-STYLE.md
+model_capabilities.yaml
+VERSION
+CHANGELOG.md
+LICENSE
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Data & Logs
+data/
+logs/
+
+# Environment
+.env
+
+# OS generated
+Thumbs.db
+.DS_Store
