@@ -93,6 +93,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "vector_db_dir", qdrant_dir)
     monkeypatch.setattr(settings, "pdf_upload_dir", upload_dir)
     monkeypatch.setattr(settings, "max_job_retries", 2)
+    monkeypatch.setattr(settings, "auth_enabled", False)
 
     test_engine = create_engine(
         f"sqlite:///{db_file.as_posix()}",

@@ -2,8 +2,13 @@
 """CLI entry point for the RAG data ingestion pipeline."""
 
 import argparse
-import sys
 from pathlib import Path
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 from src.config import settings
 from src.utils.logging import setup_logging
@@ -52,7 +57,7 @@ def main():
         
         if save_to_db and vector_store:
             vector_store.add_document(result)
-            print(f"✅ Saved {result.source_pdf} to Vector DB.")
+            print(f"[OK] Saved {result.source_pdf} to Vector DB.")
         
     elif target_path.is_dir():
         results = pipeline.process_directory(target_path)
@@ -64,7 +69,7 @@ def main():
                 vector_store.add_document(res)
         
         if save_to_db:
-            print(f"✅ Saved all batch documents to Vector DB.")
+            print(f"[OK] Saved all batch documents to Vector DB.")
     else:
         print(f"Error: Path does not exist: {target_path}", file=sys.stderr)
         sys.exit(1)
@@ -72,7 +77,7 @@ def main():
 
 def _print_summary(result):
     from src.ingestion.classifier import PageType
-    print(f"\n✅ Result for: {result.source_pdf}")
+    print(f"\n[OK] Result for: {result.source_pdf}")
     print(f"  Pages:      {result.total_pages}")
     print(f"  Classified: {result.classification_summary[PageType.TEXT]} Text, "
           f"{result.classification_summary[PageType.IMAGE]} Image, "

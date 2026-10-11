@@ -6,8 +6,9 @@ from typing import Any, Dict, List, Tuple
 
 from loguru import logger
 
+from src.auth.dependencies import build_qdrant_rbac_filter
 from src.config import settings
-from src.database.vector_store import VectorStore
+from src.database.vector_store import VectorStore, combine_filters
 
 
 class Retriever:
@@ -25,25 +26,37 @@ class Retriever:
         final_k: int = 4,
         mode: str = "hybrid_rerank",
         query_filter: Any = None,
+        user: Any = None,
     ) -> dict[str, Any]:
         """Execute hybrid retrieval, enforce Tier-1 Pre-LLM Abstention, and format Parent context blocks."""
         logger.info("Retrieving context for query: '{}' (mode={})", query, mode)
+
+        active_filter = query_filter
+        if user is not None:
+            rbac_filter = build_qdrant_rbac_filter(user)
+            active_filter = combine_filters(query_filter, rbac_filter)
+
         results = self.vector_store.search(
             query,
             initial_k=initial_k,
             final_k=final_k,
             mode=mode,
-            query_filter=query_filter,
+            query_filter=active_filter,
         )
 
         # Tier 1a: Empty Retrieval Abstention
         if not results:
-            logger.warning("Tier-1 Abstention (EMPTY_RETRIEVAL) for query: '{}'", query)
+            reason = (
+                "RBAC_EMPTY_RETRIEVAL"
+                if (settings.auth_enabled and user is not None)
+                else "EMPTY_RETRIEVAL"
+            )
+            logger.warning("Tier-1 Abstention ({}) for query: '{}'", reason, query)
             outcome = {
                 "context": "",
                 "results": [],
                 "abstained": True,
-                "abstention_reason": "EMPTY_RETRIEVAL",
+                "abstention_reason": reason,
                 "top_score": None,
                 "mode": mode,
             }
@@ -111,6 +124,7 @@ class Retriever:
         final_k: int = 4,
         mode: str = "hybrid_rerank",
         query_filter: Any = None,
+        user: Any = None,
     ) -> Tuple[str, List[Dict]]:
         """Backward-compatible wrapper returning `(formatted_context, results)`."""
         outcome = self.retrieve(
@@ -119,5 +133,6 @@ class Retriever:
             final_k=final_k,
             mode=mode,
             query_filter=query_filter,
+            user=user,
         )
         return outcome["context"], outcome["results"]

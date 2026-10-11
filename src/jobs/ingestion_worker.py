@@ -232,7 +232,7 @@ class IngestionJobManager:
 
                 self._update_progress(job_id, result.total_pages, result.total_pages, "INDEXING")
                 if force_reindex:
-                    self.vector_store.delete_document(file_hash)
+                    self.vector_store.delete_document(file_hash, org_id=doc_org_id)
                 self.vector_store.add_document(result)
 
                 duration_ms = round((time.perf_counter() - start_perf) * 1000.0, 2)
@@ -344,7 +344,7 @@ class IngestionJobManager:
             if not docs:
                 return None
 
-            self.vector_store.delete_document(file_hash)
+            self.vector_store.delete_document(file_hash, org_id=org_id)
             for doc in docs:
                 doc.status = "DELETED"
             session.commit()

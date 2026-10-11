@@ -21,6 +21,18 @@ class Settings(BaseSettings):
         default=Path("./data/vectordb"),
         description="Directory for vector database storage",
     )
+    eval_benchmark_dir: Path = Field(
+        default=Path("./data/benchmark_pdfs"),
+        description="Directory for synthetic benchmark PDFs",
+    )
+    eval_dataset_path: Path = Field(
+        default=Path("./data/eval/benchmark_dataset.json"),
+        description="Path to 100-QA ground-truth dataset JSON",
+    )
+    eval_results_dir: Path = Field(
+        default=Path("./data/eval/results"),
+        description="Directory for evaluation run outputs",
+    )
 
     # --- Page Classification ---
     text_threshold: int = Field(
@@ -126,8 +138,26 @@ class Settings(BaseSettings):
         description="Maximum automatic retry attempts on transient ingestion failure",
     )
     min_rerank_score: float = Field(
-        default=-1.5,
-        description="Minimum Cross-Encoder reranker logit score before pre-LLM abstention",
+        default=0.15,
+        description="Minimum Cross-Encoder reranker score before pre-LLM abstention",
+    )
+
+    # --- Authentication & Multi-Tenant RBAC Security ---
+    jwt_secret_key: str = Field(
+        default="enterprise-rag-super-secret-jwt-key-2026-change-in-production",
+        description="Cryptographic secret key for signing JWT tokens",
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="Cryptographic signing algorithm",
+    )
+    jwt_access_token_expire_minutes: int = Field(
+        default=60,
+        description="Lifetime of issued access tokens in minutes",
+    )
+    auth_enabled: bool = Field(
+        default=True,
+        description="Enforce JWT authentication and tenant filtering",
     )
 
     # --- LLMs / Generation ---
@@ -186,6 +216,9 @@ class Settings(BaseSettings):
         self.pdf_upload_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
         self.vector_db_dir.mkdir(parents=True, exist_ok=True)
+        self.eval_benchmark_dir.mkdir(parents=True, exist_ok=True)
+        self.eval_dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        self.eval_results_dir.mkdir(parents=True, exist_ok=True)
         Path("./data/raw").mkdir(parents=True, exist_ok=True)
 
 

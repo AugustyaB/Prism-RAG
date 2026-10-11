@@ -82,6 +82,7 @@ def hybrid_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "vector_db_dir", qdrant_dir)
     monkeypatch.setattr(settings, "pdf_upload_dir", upload_dir)
     monkeypatch.setattr(settings, "min_rerank_score", -1.5)
+    monkeypatch.setattr(settings, "auth_enabled", False)
 
     test_engine = create_engine(
         f"sqlite:///{db_file.as_posix()}",

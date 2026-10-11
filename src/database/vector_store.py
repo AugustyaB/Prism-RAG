@@ -18,6 +18,27 @@ VALID_RETRIEVAL_MODES = frozenset({"vector_only", "bm25_only", "hybrid_rrf", "hy
 RRF_K = 60.0
 
 
+def combine_filters(
+    base_filter: models.Filter | None,
+    rbac_filter: models.Filter | None,
+) -> models.Filter | None:
+    """Safely merge application query filter conditions with an RBAC security filter.
+
+    Nests filters within `must` to prevent `should` clause cross-talk/leakage between
+    application filters and role visibility ACL filters.
+    """
+    if base_filter is None and rbac_filter is None:
+        return None
+    if base_filter is None:
+        return rbac_filter
+    if rbac_filter is None:
+        return base_filter
+    if base_filter == rbac_filter:
+        return rbac_filter
+
+    return models.Filter(must=[base_filter, rbac_filter])
+
+
 class VectorStore:
     """Manages persistent hybrid vector storage using Qdrant (`rag_documents_v2`).
 
@@ -153,22 +174,33 @@ class VectorStore:
         )
         logger.info("Successfully stored {} hybrid chunks in '{}'.", len(points), self.collection_name)
 
-    def delete_document(self, file_hash: str) -> None:
-        """Delete all chunks belonging to a specific document by SHA-256 hash."""
+    def delete_document(self, file_hash: str, org_id: str | None = None) -> None:
+        """Delete all chunks belonging to a specific document by SHA-256 hash and optional tenant org_id."""
+        must_conds = [
+            models.FieldCondition(
+                key="file_hash",
+                match=models.MatchValue(value=file_hash),
+            )
+        ]
+        if org_id is not None:
+            must_conds.append(
+                models.FieldCondition(
+                    key="org_id",
+                    match=models.MatchValue(value=org_id),
+                )
+            )
         self.client.delete(
             collection_name=self.collection_name,
             points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="file_hash",
-                            match=models.MatchValue(value=file_hash),
-                        )
-                    ]
-                )
+                filter=models.Filter(must=must_conds)
             ),
         )
-        logger.info("Deleted chunks for document {} from '{}'.", file_hash, self.collection_name)
+        logger.info(
+            "Deleted chunks for document {} (org_id={}) from '{}'.",
+            file_hash,
+            org_id,
+            self.collection_name,
+        )
 
     def search(
         self,

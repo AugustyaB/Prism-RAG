@@ -8,6 +8,11 @@ from src.config import settings
 
 def setup_logging() -> None:
     """Configure loguru with structured output."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
     # Remove default handler
     logger.remove()
 
