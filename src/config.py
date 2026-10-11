@@ -41,6 +41,22 @@ class Settings(BaseSettings):
         default=100,
         description="Character overlap between consecutive chunks",
     )
+    parent_chunk_size: int = Field(
+        default=1200,
+        description="Parent context block size in characters",
+    )
+    parent_overlap_size: int = Field(
+        default=150,
+        description="Overlap between consecutive parent blocks",
+    )
+    child_chunk_size: int = Field(
+        default=300,
+        description="Child chunk size in characters for dense/BM25 indexing",
+    )
+    child_overlap_size: int = Field(
+        default=50,
+        description="Overlap between consecutive child chunks",
+    )
 
     # --- OCR ---
     ocr_dpi: int = Field(
@@ -86,17 +102,49 @@ class Settings(BaseSettings):
         description="L2 normalize embeddings (required for cosine similarity)",
     )
 
-    # --- Vector Database ---
+    # --- Vector & Relational Databases ---
     qdrant_collection_name: str = Field(
-        default="rag_documents",
-        description="Name of the Qdrant collection",
+        default="rag_documents_v2",
+        description="Name of the active Qdrant collection",
+    )
+    qdrant_collection_v2: str = Field(
+        default="rag_documents_v2",
+        description="Name of the v2 hybrid Qdrant collection",
+    )
+    database_url: str = Field(
+        default="sqlite:///./data/metadata.db",
+        description="SQLAlchemy connection URL for relational metadata database",
+    )
+
+    # --- Async Ingestion Worker & Retrieval Safety ---
+    max_ingestion_workers: int = Field(
+        default=2,
+        description="Bounded thread pool size for background PDF ingestion jobs",
+    )
+    max_job_retries: int = Field(
+        default=2,
+        description="Maximum automatic retry attempts on transient ingestion failure",
+    )
+    min_rerank_score: float = Field(
+        default=-1.5,
+        description="Minimum Cross-Encoder reranker logit score before pre-LLM abstention",
     )
 
     # --- LLMs / Generation ---
     llm_provider: str = Field(
-        default="ollama",
-        description="LLM provider: 'ollama' or 'gemini'",
+        default="lmstudio",
+        description="LLM provider: 'lmstudio', 'ollama', or 'gemini'",
     )
+    # --- LM Studio (OpenAI-compatible local) ---
+    lmstudio_base_url: str = Field(
+        default="http://localhost:1234/v1",
+        description="Base URL for LM Studio OpenAI-compatible API",
+    )
+    lmstudio_model: str = Field(
+        default="gpt-oss-20b",
+        description="Model loaded in LM Studio",
+    )
+    # --- Ollama ---
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for Ollama local service",
@@ -105,6 +153,7 @@ class Settings(BaseSettings):
         default="llama3",
         description="Local Ollama model name",
     )
+    # --- Gemini (Cloud) ---
     gemini_api_key: str | None = Field(
         default=None,
         description="Gemini API key for cloud generation",
@@ -137,6 +186,7 @@ class Settings(BaseSettings):
         self.pdf_upload_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
         self.vector_db_dir.mkdir(parents=True, exist_ok=True)
+        Path("./data/raw").mkdir(parents=True, exist_ok=True)
 
 
 # Singleton instance

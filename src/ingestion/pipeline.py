@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Dict
+from typing import Callable, List, Dict
 
+import fitz
 import psutil
 from loguru import logger
 
@@ -54,8 +55,12 @@ class IngestionPipeline:
             self.ocr_engine = OcrEngine()
         return self.ocr_engine
 
-    def process_pdf(self, pdf_path: Path) -> IngestionResult:
-        """Process a single PDF from path to chunks."""
+    def process_pdf(
+        self,
+        pdf_path: Path,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> IngestionResult:
+        """Process a single PDF from path to chunks using a single fitz.open handle."""
         pdf_path = Path(pdf_path)
         
         # Failsafe: basic file check
@@ -64,9 +69,9 @@ class IngestionPipeline:
             
         logger.info("Starting ingestion for {}", pdf_path.name)
         
-        # 1. Load Document Metadata
-        doc_info = self.parser.load(pdf_path)
-        file_hash = doc_info.file_hash
+        # 1. Compute SHA-256 hash once
+        file_hash = self.parser.compute_file_hash(pdf_path)
+        source_pdf = pdf_path.name
         
         extracted_pages: List[tuple[int, str, str]] = []
         classifications: Dict[PageType, int] = {
@@ -74,58 +79,70 @@ class IngestionPipeline:
             PageType.IMAGE: 0,
             PageType.MIXED: 0,
         }
-        errors = []
+        errors: List[str] = []
+        total_pages = 0
 
-        # 2. Iterate Pages
-        import fitz
+        # 2. Open PDF once and iterate pages directly
         try:
             doc = fitz.open(str(pdf_path))
-            
-            for page_result in self.parser.iter_pages(pdf_path):
-                self._check_memory()
-                page_num = page_result.page_number
-                
-                try:
-                    # a. Classify
-                    page_type = self.classifier.classify(page_result)
-                    classifications[page_type] += 1
-                    
-                    final_text = ""
-                    
-                    # b. Route
-                    if page_type == PageType.TEXT:
-                        final_text = page_result.raw_text
-                        
-                    elif page_type == PageType.IMAGE:
-                        ocr = self.get_ocr_engine()
-                        final_text = ocr.extract_text(doc[page_num - 1], page_num)
-                        
-                    elif page_type == PageType.MIXED:
-                        ocr = self.get_ocr_engine()
-                        final_text = ocr.extract_from_regions(
-                            doc[page_num - 1], 
-                            page_num, 
-                            page_result.raw_text
-                        )
-                    
-                    extracted_pages.append((page_num, final_text, doc_info.file_path.name))
-                    
-                except Exception as e:
-                    err_msg = f"Failed to route/extract page {page_num}: {e}"
-                    logger.error(err_msg)
-                    errors.append(err_msg)
-                    
+        except Exception as e:
+            raise RuntimeError(f"Failed to open PDF: {pdf_path} — {e}") from e
+
+        try:
+            if doc.is_encrypted:
+                logger.warning("PDF is password-protected, skipping: {}", source_pdf)
+                errors.append(f"PDF is password-protected: {source_pdf}")
+            else:
+                total_pages = len(doc)
+                if progress_callback:
+                    progress_callback(0, total_pages, "PARSING")
+
+                for idx in range(total_pages):
+                    self._check_memory()
+                    page_num = idx + 1
+                    try:
+                        page_result = self.parser.extract_page(doc, idx, source_pdf)
+                        page_type = self.classifier.classify(page_result)
+                        classifications[page_type] += 1
+
+                        stage = "PARSING" if page_type == PageType.TEXT else "OCR"
+                        if progress_callback:
+                            progress_callback(idx, total_pages, stage)
+
+                        final_text = ""
+                        if page_type == PageType.TEXT:
+                            final_text = page_result.raw_text
+                        elif page_type == PageType.IMAGE:
+                            ocr = self.get_ocr_engine()
+                            final_text = ocr.extract_text(doc[idx], page_num)
+                        elif page_type == PageType.MIXED:
+                            ocr = self.get_ocr_engine()
+                            final_text = ocr.extract_from_regions(
+                                doc[idx],
+                                page_num,
+                                page_result.raw_text,
+                            )
+
+                        extracted_pages.append((page_num, final_text, source_pdf))
+                        if progress_callback:
+                            progress_callback(page_num, total_pages, stage)
+
+                    except Exception as e:
+                        err_msg = f"Failed to route/extract page {page_num}: {e}"
+                        logger.error(err_msg)
+                        errors.append(err_msg)
         finally:
-            if 'doc' in locals() and hasattr(doc, 'close'):
-                doc.close()
+            doc.close()
 
         # 3. Chunk collected text
+        if progress_callback:
+            progress_callback(total_pages, total_pages, "CHUNKING")
         chunks = self.chunker.chunk_pages(extracted_pages)
         
         result = IngestionResult(
-            source_pdf=doc_info.file_path.name,
+            source_pdf=source_pdf,
             file_hash=file_hash,
-            total_pages=doc_info.total_pages,
+            total_pages=total_pages,
             classification_summary=classifications,
             total_chunks=len(chunks),
             chunks=chunks,

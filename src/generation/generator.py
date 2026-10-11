@@ -63,6 +63,46 @@ class OllamaGenerator(BaseGenerator):
             return f"Error connecting to local Ollama service: {e}"
 
 
+class LMStudioGenerator(BaseGenerator):
+    """Local LLM via LM Studio's OpenAI-compatible API."""
+    
+    def generate(self, query: str, context: str) -> str:
+        prompt = self._build_prompt(query, context)
+        payload = {
+            "model": settings.lmstudio_model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful and precise RAG assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "stream": False
+        }
+        # Normalize base URL: ensure /v1 is in the path
+        base = settings.lmstudio_base_url.rstrip("/")
+        if not base.endswith("/v1"):
+            base += "/v1"
+        endpoint = f"{base}/chat/completions"
+        logger.info(f"Querying LM Studio at {endpoint} with model {settings.lmstudio_model}")
+        
+        try:
+            response = requests.post(endpoint, json=payload, timeout=180)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+        except requests.exceptions.ReadTimeout:
+            logger.error("LM Studio query timed out after 180 seconds.")
+            return "Error: Local LLM timed out."
+        except requests.exceptions.ConnectionError:
+            logger.error(f"Cannot connect to LM Studio at {settings.lmstudio_base_url}")
+            return "Error: LM Studio is not running. Start it and load a model."
+        except (KeyError, IndexError) as e:
+            logger.error(f"Unexpected LM Studio response format: {e}")
+            return "Error: Unexpected response from LM Studio."
+        except Exception as e:
+            logger.error(f"LM Studio generation failed: {e}")
+            return f"Error connecting to LM Studio: {e}"
+
+
 class GeminiGenerator(BaseGenerator):
     """Cloud LLM interaction utilizing Google GenAI API."""
     
@@ -94,15 +134,17 @@ def get_generator(provider: str | None = None) -> BaseGenerator:
     """Factory method to instantiate the correct generator.
     
     Args:
-        provider: 'ollama' or 'gemini'. Defaults to settings.llm_provider.
+        provider: 'lmstudio', 'ollama', or 'gemini'. Defaults to settings.llm_provider.
     """
     provider = provider or settings.llm_provider
     provider = provider.lower()
     
-    if provider == "gemini":
+    if provider == "lmstudio":
+        return LMStudioGenerator()
+    elif provider == "gemini":
         return GeminiGenerator()
     elif provider == "ollama":
         return OllamaGenerator()
     else:
-        logger.warning(f"Unknown provider '{provider}', falling back to Ollama.")
-        return OllamaGenerator()
+        logger.warning(f"Unknown provider '{provider}', falling back to LM Studio.")
+        return LMStudioGenerator()

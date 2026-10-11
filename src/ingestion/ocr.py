@@ -99,6 +99,23 @@ class OcrEngine:
         img = Image.open(BytesIO(pixmap.tobytes("png")))
         return np.array(img)
 
+    def _readtext_with_timeout(self, img_array: np.ndarray) -> list[str]:
+        """Run EasyOCR readtext bounded by settings.ocr_timeout_seconds."""
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+        timeout_s = max(1, int(settings.ocr_timeout_seconds))
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.reader.readtext, img_array, detail=0)
+        try:
+            return future.result(timeout=timeout_s)
+        except FuturesTimeoutError as exc:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise OcrTimeoutError(
+                f"OCR exceeded timeout of {timeout_s}s"
+            ) from exc
+        finally:
+            executor.shutdown(wait=False)
+
     def extract_text(self, page: fitz.Page, page_num: int) -> str:
         """Extract text from a full page image using OCR.
 
@@ -112,7 +129,7 @@ class OcrEngine:
         try:
             img_array = self._render_page_to_image(page)
 
-            results = self.reader.readtext(img_array, detail=0)
+            results = self._readtext_with_timeout(img_array)
 
             text = " ".join(results)
             logger.debug(
@@ -169,7 +186,7 @@ class OcrEngine:
                     if img_array.shape[0] < 50 or img_array.shape[1] < 50:
                         continue
 
-                    results = self.reader.readtext(img_array, detail=0)
+                    results = self._readtext_with_timeout(img_array)
                     if results:
                         ocr_texts.append(" ".join(results))
 

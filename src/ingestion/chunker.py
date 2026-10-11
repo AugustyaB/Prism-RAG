@@ -1,7 +1,9 @@
-"""Semantic chunker — splits text into coherent, metadata-tagged chunks."""
+"""Semantic chunker — Cross-Page Sliding Window & Parent-Child hierarchical chunking (L3)."""
 
-import re
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+import re
 from typing import List, Tuple
 
 from loguru import logger
@@ -11,20 +13,23 @@ from src.config import settings
 
 @dataclass
 class TextChunk:
-    """A semantic chunk of text with metadata."""
-    
+    """A semantic child chunk of text with parent context and page-range metadata."""
+
     text: str
     char_count: int
     metadata: dict = field(default_factory=dict)
-    # metadata includes: source_pdf, page_number, chunk_index, section_header
+    # metadata includes: source_pdf, page_number, page_end, chunk_index,
+    # parent_id, parent_text, section_header
 
 
 class SemanticChunker:
-    """Splits text into chunks prioritizing structural boundaries.
-    
-    Uses double newlines (paragraphs) as primary boundaries. Falls back
-    to sentences for oversized paragraphs. Merges small paragraphs.
-    Maintains a rolling overlap for context continuity.
+    """Splits text across page boundaries into ~1200-char Parent blocks and ~300-char Child chunks.
+
+    - Stitches multi-page text into a continuous stream with a character-offset page span map
+      so sentences and paragraphs crossing page breaks are never severed in half.
+    - Builds Parent blocks (~1200 chars, ~150 overlap) for rich LLM grounding context.
+    - Subdivides each Parent block into Child chunks (~300 chars, ~50 overlap) for high-precision
+      dense + BM25 retrieval.
     """
 
     def __init__(
@@ -32,192 +37,303 @@ class SemanticChunker:
         max_size: int | None = None,
         min_size: int | None = None,
         overlap: int | None = None,
+        parent_size: int | None = None,
+        parent_overlap: int | None = None,
+        child_size: int | None = None,
+        child_overlap: int | None = None,
     ):
-        """Initialize chunker with configurable limits.
-        
-        Args:
-            max_size: Max characters per chunk. Defaults to settings.
-            min_size: Min characters per chunk. Defaults to settings.
-            overlap: Character overlap between consecutive chunks.
-        """
-        self.max_size = max_size or settings.max_chunk_size
+        """Initialize Parent-Child chunker with configurable limits."""
+        self.parent_size = parent_size or max_size or settings.parent_chunk_size
+        self.parent_overlap = (
+            parent_overlap
+            if parent_overlap is not None
+            else (overlap if overlap is not None else settings.parent_overlap_size)
+        )
+        self.child_size = child_size or settings.child_chunk_size
+        self.child_overlap = (
+            child_overlap if child_overlap is not None else settings.child_overlap_size
+        )
+        self.max_size = max_size or self.parent_size
         self.min_size = min_size or settings.min_chunk_size
-        self.overlap = overlap or settings.overlap_size
+        self.overlap = overlap if overlap is not None else self.parent_overlap
 
     def _split_into_paragraphs(self, text: str) -> List[str]:
         """Split text by double newlines."""
-        # Normalize line endings
         text = text.replace("\r\n", "\n")
-        # Split by 2 or more newlines
-        paras = re.split(r'\n{2,}', text)
+        paras = re.split(r"\n{2,}", text)
         return [p.strip() for p in paras if p.strip()]
 
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Fallback split by basic sentence boundaries."""
-        # Basic regex for sentence split (. ! ?) followed by space and Capital letter
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+        """Fallback split by sentence boundaries (. ! ? followed by whitespace)."""
+        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
         return [s.strip() for s in sentences if s.strip()]
 
     def _attempt_header_detection(self, paragraph: str) -> str | None:
-        """Simple heuristic to detect if a short line is a header."""
-        lines = paragraph.split('\n')
+        """Simple heuristic to detect if a short leading line is a section header."""
+        lines = paragraph.split("\n")
         if not lines:
             return None
-        
+
         first_line = lines[0].strip()
-        # If the first line is short, doesn't end with punctuation, and is all caps
-        # or starts with a number (e.g. "1. Introduction"), it might be a header.
-        if (
-            len(first_line) < 60 
-            and not first_line.endswith(('.', ':', ','))
-        ):
-            if first_line.isupper() or re.match(r'^\d+(\.\d+)*\s+[A-Z]', first_line, re.I):
+        if 0 < len(first_line) < 60 and not first_line.endswith((".", ":", ",")):
+            if first_line.isupper() or re.match(r"^\d+(\.\d+)*\s+[A-Z]", first_line, re.I):
                 return first_line
-        
+
         return None
 
-    def chunk_text(self, text: str, metadata_base: dict) -> List[TextChunk]:
-        """Chunk a single block of text (typically a page).
-        
-        Args:
-            text: Raw text to chunk.
-            metadata_base: Base metadata (e.g., source_pdf, page_number).
-            
-        Returns:
-            List of TextChunk objects.
+    def _slice_with_overlap(
+        self,
+        text: str,
+        target_size: int,
+        overlap_size: int,
+    ) -> list[tuple[int, int, str]]:
+        """Split `text` into segments of at most `target_size` chars with `overlap_size` overlap,
+        returning `[(start_offset, end_offset, segment_text)]` relative to `text`.
         """
-        paragraphs = self._split_into_paragraphs(text)
-        
-        chunks = []
-        current_chunk_text = ""
-        current_header = ""
+        n = len(text)
+        if n == 0:
+            return []
+        if n <= target_size:
+            stripped = text.strip()
+            return [(0, n, stripped)] if stripped else []
 
-        # Start chunk index counter (can be refined across pages later)
-        chunk_idx = metadata_base.get("chunk_index", 0)
+        # Collect atomic candidate break positions (paragraph breaks, sentence breaks, spaces)
+        segments: list[tuple[int, int, str]] = []
+        start = 0
 
-        for para in paragraphs:
-            # Check if this paragraph starts with a header
-            potential_header = self._attempt_header_detection(para)
-            if potential_header:
-                current_header = potential_header
+        while start < n:
+            # Skip leading whitespace
+            while start < n and text[start].isspace():
+                start += 1
+            if start >= n:
+                break
 
-            # Strategy: if adding paragraph to current chunk exceeds max size,
-            # finalize current chunk and start a new one.
-            potential_len = len(current_chunk_text) + (1 if current_chunk_text else 0) + len(para)
-            
-            if potential_len > self.max_size and current_chunk_text:
-                # Need to push the current chunk before adding the large paragraph
-                # But check if current_chunk is at least min_size
-                if len(current_chunk_text) >= self.min_size:
-                    meta = metadata_base.copy()
-                    meta["chunk_index"] = chunk_idx
-                    if current_header:
-                        meta["section_header"] = current_header
-                    
-                    chunks.append(
-                        TextChunk(
-                            text=current_chunk_text,
-                            char_count=len(current_chunk_text),
-                            metadata=meta
-                        )
-                    )
-                    chunk_idx += 1
-                    
-                    # Start new chunk with overlap from the END of the current chunk
-                    overlap_text = current_chunk_text[-self.overlap:] if self.overlap > 0 else ""
-                    # Ensure we don't snap words in half if possible (find previous space)
-                    if overlap_text:
-                        space_idx = overlap_text.find(' ')
-                        if space_idx != -1 and space_idx < len(overlap_text) // 2:
-                            overlap_text = overlap_text[space_idx+1:]
-                    
-                    current_chunk_text = overlap_text + ("\n" if overlap_text else "") + para
+            ideal_end = min(start + target_size, n)
+            if ideal_end == n:
+                seg_text = text[start:n].strip()
+                if seg_text:
+                    segments.append((start, n, seg_text))
+                break
+
+            window = text[start:ideal_end]
+            cut_offset = -1
+
+            # 1. Prefer double newline (paragraph break) in the second half of the window
+            para_pos = window.rfind("\n\n")
+            if para_pos >= target_size // 3:
+                cut_offset = start + para_pos
+
+            # 2. Fall back to sentence boundary (. ! ? followed by space or newline)
+            if cut_offset == -1:
+                sent_matches = list(re.finditer(r"[.!?](?=\s)", window))
+                if sent_matches and sent_matches[-1].end() >= target_size // 4:
+                    cut_offset = start + sent_matches[-1].end()
+
+            # 3. Fall back to line break or word boundary (whitespace)
+            if cut_offset == -1:
+                space_pos = max(window.rfind("\n"), window.rfind(" "))
+                if space_pos > 0:
+                    cut_offset = start + space_pos
                 else:
-                    # Current chunk is very small, force append and accept breaking max_size slightly, 
-                    # OR we split the paragraph. Let's just append for context continuity.
-                    current_chunk_text += ("\n" if current_chunk_text else "") + para
-            
-            elif potential_len > self.max_size and not current_chunk_text:
-                # The single paragraph ITSELF is larger than max_size.
-                # Fall back to sentence splitting.
-                sentences = self._split_into_sentences(para)
-                temp_chunk = ""
-                for sentence in sentences:
-                    temp_len = len(temp_chunk) + (1 if temp_chunk else 0) + len(sentence)
-                    if temp_len > self.max_size and temp_chunk:
-                        meta = metadata_base.copy()
-                        meta["chunk_index"] = chunk_idx
-                        if current_header:
-                            meta["section_header"] = current_header
-                        
-                        chunks.append(
-                            TextChunk(text=temp_chunk, char_count=len(temp_chunk), metadata=meta)
-                        )
-                        chunk_idx += 1
-                        
-                        overlap_text = temp_chunk[-self.overlap:] if self.overlap > 0 else ""
-                        temp_chunk = overlap_text + (" " if overlap_text else "") + sentence
-                    else:
-                        temp_chunk += (" " if temp_chunk else "") + sentence
-                
-                # Assign what's left to current_chunk_text
-                current_chunk_text = temp_chunk
-            else:
-                # Normal accumulation
-                current_chunk_text += ("\n" if current_chunk_text else "") + para
+                    cut_offset = ideal_end
 
-        # Flush the final chunk
-        if current_chunk_text.strip() and len(current_chunk_text.strip()) >= 10: # Noise guard
-            meta = metadata_base.copy()
-            meta["chunk_index"] = chunk_idx
-            if current_header:
-                meta["section_header"] = current_header
-            
-            cleaned_text = current_chunk_text.strip()
-            chunks.append(
-                TextChunk(text=cleaned_text, char_count=len(cleaned_text), metadata=meta)
+            cut_offset = max(start + 1, cut_offset)
+            seg_text = text[start:cut_offset].strip()
+            if seg_text:
+                segments.append((start, cut_offset, seg_text))
+
+            if cut_offset >= n:
+                break
+
+            # Advance `start` keeping `overlap_size` characters of context
+            if overlap_size > 0:
+                next_start = max(start + 1, cut_offset - overlap_size)
+                # Snap forward to word/line boundary so we never cut a token in half
+                if next_start > start and next_start < cut_offset:
+                    candidates = [
+                        idx
+                        for idx in (
+                            text.find(" ", next_start, cut_offset),
+                            text.find("\n", next_start, cut_offset),
+                        )
+                        if idx != -1
+                    ]
+                    if candidates:
+                        next_start = min(candidates) + 1
+                start = next_start
+            else:
+                start = cut_offset
+
+        return segments
+
+    @staticmethod
+    def _resolve_page_range(
+        start_char: int,
+        end_char: int,
+        page_spans: list[tuple[int, int, int]],
+    ) -> tuple[int, int]:
+        """Resolve `(page_number, page_end)` for a character interval `[start_char, end_char)`."""
+        if not page_spans:
+            return (1, 1)
+
+        pages_hit = [
+            page_num
+            for span_start, span_end, page_num in page_spans
+            if span_end > start_char and span_start < end_char
+        ]
+        if not pages_hit:
+            return (page_spans[0][2], page_spans[0][2])
+        return (min(pages_hit), max(pages_hit))
+
+    def _detect_latest_header(self, text_up_to_block: str, block_text: str) -> str:
+        """Detect the active section header for a parent block."""
+        for para in self._split_into_paragraphs(block_text):
+            hdr = self._attempt_header_detection(para)
+            if hdr:
+                return hdr
+        for para in reversed(self._split_into_paragraphs(text_up_to_block)):
+            hdr = self._attempt_header_detection(para)
+            if hdr:
+                return hdr
+        return ""
+
+    def chunk_text(self, text: str, metadata_base: dict) -> List[TextChunk]:
+        """Chunk a single text string into Parent-Child `TextChunk` objects."""
+        cleaned = text.replace("\r\n", "\n").strip()
+        if not cleaned or len(cleaned) < 10:
+            return []
+
+        source_pdf = metadata_base.get("source_pdf", "unknown.pdf")
+        page_num = int(metadata_base.get("page_number", 1))
+        page_end = int(metadata_base.get("page_end", page_num))
+        start_chunk_idx = int(metadata_base.get("chunk_index", 0))
+
+        page_spans = [(0, len(cleaned), page_num)]
+        chunks = self._build_parent_child_chunks(
+            full_text=cleaned,
+            page_spans=page_spans,
+            source_pdf=source_pdf,
+            base_metadata=metadata_base,
+            start_chunk_idx=start_chunk_idx,
+            override_page_end=page_end if page_end > page_num else None,
+        )
+        return chunks
+
+    def _build_parent_child_chunks(
+        self,
+        full_text: str,
+        page_spans: list[tuple[int, int, int]],
+        source_pdf: str,
+        base_metadata: dict | None = None,
+        start_chunk_idx: int = 0,
+        override_page_end: int | None = None,
+    ) -> List[TextChunk]:
+        """Build ~1200-char Parent blocks from `full_text` and subdivide into ~300-char Child chunks."""
+        parent_segments = self._slice_with_overlap(
+            full_text,
+            target_size=self.parent_size,
+            overlap_size=self.parent_overlap,
+        )
+
+        all_children: List[TextChunk] = []
+        chunk_idx = start_chunk_idx
+
+        for parent_idx, (p_start, p_end, parent_text) in enumerate(parent_segments):
+            if len(parent_text.strip()) < 10:
+                continue
+
+            page_start, resolved_page_end = self._resolve_page_range(
+                p_start, p_end, page_spans
+            )
+            if override_page_end is not None and override_page_end > resolved_page_end:
+                resolved_page_end = override_page_end
+
+            parent_id = f"{source_pdf}::parent_{parent_idx}"
+            section_header = self._detect_latest_header(full_text[:p_start], parent_text)
+
+            child_segments = self._slice_with_overlap(
+                parent_text,
+                target_size=self.child_size,
+                overlap_size=self.child_overlap,
             )
 
-        return chunks
+            for _, _, child_text in child_segments:
+                cleaned_child = child_text.strip()
+                if len(cleaned_child) < 10:
+                    continue
+
+                meta = (base_metadata or {}).copy()
+                meta.update(
+                    {
+                        "source_pdf": source_pdf,
+                        "page_number": page_start,
+                        "page_end": resolved_page_end,
+                        "chunk_index": chunk_idx,
+                        "parent_id": parent_id,
+                        "parent_text": parent_text,
+                    }
+                )
+                if section_header:
+                    meta["section_header"] = section_header
+
+                all_children.append(
+                    TextChunk(
+                        text=cleaned_child,
+                        char_count=len(cleaned_child),
+                        metadata=meta,
+                    )
+                )
+                chunk_idx += 1
+
+        return all_children
 
     def chunk_pages(
         self, pages: List[Tuple[int, str, str]]
     ) -> List[TextChunk]:
-        """Process multiple pages into cross-page continuous chunks.
-        
-        Args:
-            pages: List of (page_num, text, source_pdf).
-            
-        Returns:
-            Flat list of all TextChunks generated.
+        """Stitch multiple pages into a continuous cross-page stream, build Parent blocks,
+        and subdivide into Child chunks tagged with `parent_id`, `parent_text`, `page_number`, and `page_end`.
         """
-        all_chunks = []
-        global_chunk_idx = 0
-        
-        # We concatenate text first and maintain a mapping, or simply
-        # chunk per page and allow minor breaks. For simplicity in V1,
-        # chunking per page with metadata is safer for precise citations.
-        
-        for page_num, text, source_pdf in pages:
-            if not text.strip():
+        if not pages:
+            return []
+
+        source_pdf = pages[0][2] if pages[0][2] else "unknown.pdf"
+        stream_parts: list[str] = []
+        page_spans: list[tuple[int, int, int]] = []
+        cursor = 0
+
+        for page_num, raw_text, pdf_name in pages:
+            if pdf_name:
+                source_pdf = pdf_name
+            cleaned_page = (raw_text or "").replace("\r\n", "\n").strip()
+            if not cleaned_page:
                 continue
-                
-            metadata_base = {
-                "source_pdf": source_pdf,
-                "page_number": page_num,
-                "chunk_index": global_chunk_idx
-            }
-            
-            page_chunks = self.chunk_text(text, metadata_base)
-            
-            if page_chunks:
-                all_chunks.extend(page_chunks)
-                global_chunk_idx += len(page_chunks)
-                
+
+            if stream_parts:
+                # Join across page boundary with a space/newline so sentences crossing pages stay unified
+                sep = " " if not stream_parts[-1].endswith(("\n", ".", "!", "?")) else "\n"
+                stream_parts.append(sep)
+                cursor += len(sep)
+
+            start_char = cursor
+            stream_parts.append(cleaned_page)
+            cursor += len(cleaned_page)
+            page_spans.append((start_char, cursor, int(page_num)))
+
+        if not stream_parts:
+            return []
+
+        full_text = "".join(stream_parts)
+        all_chunks = self._build_parent_child_chunks(
+            full_text=full_text,
+            page_spans=page_spans,
+            source_pdf=source_pdf,
+            start_chunk_idx=0,
+        )
+
         logger.info(
-            "Chunked {} pages into {} chunks (avg size: {:.0f} chars)",
+            "Chunked {} pages into {} child chunks (avg child size: {:.0f} chars)",
             len(pages),
             len(all_chunks),
-            sum(c.char_count for c in all_chunks) / len(all_chunks) if all_chunks else 0
+            sum(c.char_count for c in all_chunks) / len(all_chunks) if all_chunks else 0,
         )
         return all_chunks

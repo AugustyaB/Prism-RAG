@@ -112,7 +112,9 @@ class PdfParser:
         )
 
     @staticmethod
-    def iter_pages(pdf_path: Path) -> Generator[PageResult, None, None]:
+    def iter_pages(
+        pdf_path: Path, doc: fitz.Document | None = None
+    ) -> Generator[PageResult, None, None]:
         """Lazily iterate over all pages in a PDF, yielding PageResult per page.
 
         Wraps each page extraction in try/except so a single
@@ -120,50 +122,55 @@ class PdfParser:
 
         Args:
             pdf_path: Path to the PDF file.
+            doc: Optional already-opened PyMuPDF Document handle to avoid re-opening.
 
         Yields:
             PageResult for each successfully processed page.
         """
         pdf_path = Path(pdf_path)
         source_pdf = pdf_path.name
+        owns_doc = doc is None
+
+        if owns_doc:
+            try:
+                doc = fitz.open(str(pdf_path))
+            except Exception as e:
+                logger.error("Cannot open PDF {}: {}", pdf_path.name, e)
+                return
 
         try:
-            doc = fitz.open(str(pdf_path))
-        except Exception as e:
-            logger.error("Cannot open PDF {}: {}", pdf_path.name, e)
-            return
+            if doc.is_encrypted:
+                logger.warning(
+                    "PDF is password-protected, skipping: {}", pdf_path.name
+                )
+                return
 
-        if doc.is_encrypted:
-            logger.warning(
-                "PDF is password-protected, skipping: {}", pdf_path.name
-            )
-            doc.close()
-            return
+            total = len(doc)
+            logger.info("Iterating {} pages of {}", total, pdf_path.name)
 
-        total = len(doc)
-        logger.info("Iterating {} pages of {}", total, pdf_path.name)
-
-        for page_num in range(total):
-            try:
-                result = PdfParser.extract_page(doc, page_num, source_pdf)
-                if (page_num + 1) % 100 == 0 or page_num == 0:
-                    logger.debug(
-                        "Page {}/{} — {} chars, {} images",
+            for page_num in range(total):
+                try:
+                    result = PdfParser.extract_page(doc, page_num, source_pdf)
+                    if (page_num + 1) % 100 == 0 or page_num == 0:
+                        logger.debug(
+                            "Page {}/{} — {} chars, {} images",
+                            page_num + 1,
+                            total,
+                            result.text_length,
+                            result.image_count,
+                        )
+                    yield result
+                except Exception as e:
+                    logger.error(
+                        "Error on page {}/{} of {}: {}",
                         page_num + 1,
                         total,
-                        result.text_length,
-                        result.image_count,
+                        pdf_path.name,
+                        e,
                     )
-                yield result
-            except Exception as e:
-                logger.error(
-                    "Error on page {}/{} of {}: {}",
-                    page_num + 1,
-                    total,
-                    pdf_path.name,
-                    e,
-                )
-                continue
+                    continue
 
-        doc.close()
-        logger.info("Finished iterating {}", pdf_path.name)
+            logger.info("Finished iterating {}", pdf_path.name)
+        finally:
+            if owns_doc and doc is not None:
+                doc.close()

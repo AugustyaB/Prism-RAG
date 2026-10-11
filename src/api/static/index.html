@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
   <!-- Ambient Background Glows -->
@@ -19,7 +19,7 @@
     <!-- Sidebar: Uploads & Config -->
     <aside class="sidebar">
       <header class="app-header">
-        <h1>Antigravity RAG</h1>
+        <h1>RAG Pipeline</h1>
         <p class="subtitle">Secure Document Intelligence</p>
       </header>
       
@@ -41,9 +41,9 @@
       <section class="config-section">
         <h3>Model Engine</h3>
         <div class="toggle-container">
-          <label class="toggle-btn active" data-provider="ollama">
-            <input type="radio" name="llm_provider" value="ollama" checked hidden />
-            Llama 3 (Local)
+          <label class="toggle-btn active" data-provider="lmstudio">
+            <input type="radio" name="llm_provider" value="lmstudio" checked hidden />
+            GPT-OSS (Local)
           </label>
           <label class="toggle-btn" data-provider="gemini">
             <input type="radio" name="llm_provider" value="gemini" hidden />

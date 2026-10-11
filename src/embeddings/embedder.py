@@ -7,6 +7,9 @@ from loguru import logger
 from src.config import settings
 
 
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+
 class LocalEmbedder:
     """Generates dense vector embeddings using a local model.
     
@@ -107,6 +110,17 @@ class LocalEmbedder:
             convert_to_numpy=True
         )
         return vector.tolist()
+
+    def embed_query(self, query: str) -> List[float]:
+        """Embed a search query, prepending the asymmetric BGE v1.5 retrieval instruction prefix."""
+        if not query or not query.strip():
+            return []
+
+        cleaned = query.strip()
+        if "bge" in self.model_name.lower() and not cleaned.startswith(BGE_QUERY_PREFIX):
+            cleaned = f"{BGE_QUERY_PREFIX}{cleaned}"
+
+        return self.embed_text(cleaned)
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of strings concurrently.

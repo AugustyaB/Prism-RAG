@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sendBtn = document.getElementById('send-btn');
     
     // State
-    let currentProvider = 'ollama';
+    let currentProvider = 'lmstudio';
 
     // --- Provider Toggle ---
     toggleBtns.forEach(btn => {
