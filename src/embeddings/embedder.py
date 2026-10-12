@@ -19,7 +19,6 @@ class LocalEmbedder:
 
     def __init__(self):
         """Initialize the embedder configuration but defer model loading."""
-        import torch
         self._model = None
         self._reranker = None
         self.model_name = settings.embedding_model
@@ -27,10 +26,18 @@ class LocalEmbedder:
         
         # Check if CUDA is requested and available
         self.device = settings.embedding_device.lower()
-        if self.device == "cuda" and not torch.cuda.is_available():
+        try:
+            import torch
+            if self.device == "cuda" and not torch.cuda.is_available():
+                logger.warning(
+                    "CUDA requested for embeddings but Torch is not compiled "
+                    "with CUDA. Falling back to CPU."
+                )
+                self.device = "cpu"
+        except (ImportError, OSError) as e:
             logger.warning(
-                "CUDA requested for embeddings but Torch is not compiled "
-                "with CUDA. Falling back to CPU."
+                "Could not import Torch ({}); deferring device configuration to CPU.",
+                e,
             )
             self.device = "cpu"
 

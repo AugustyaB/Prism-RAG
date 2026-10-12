@@ -1,13 +1,16 @@
-"""FastAPI Gateway exposing non-blocking 202 PDF upload, job polling, document CRUD, and RAG query endpoints (L4)."""
+"""FastAPI Gateway exposing non-blocking 202 PDF upload, job polling, document CRUD, RAG query, and telemetry metrics (L4)."""
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import math
 import os
 from pathlib import Path
 import shutil
+import threading
 import time
 from typing import Any
+import uuid
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -16,19 +19,31 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from src.api.auth_routes import router as auth_router
 from src.auth.dependencies import build_qdrant_rbac_filter, get_current_user
 from src.auth.security import seed_demo_accounts
 from src.config import settings
 from src.database.models import QueryTelemetry, User
-from src.database.relational import SessionLocal, init_db
+from src.database.relational import SessionLocal, get_db, init_db
 from src.database.vector_store import VectorStore
 from src.embeddings.embedder import LocalEmbedder
 from src.generation.generator import get_generator
 from src.ingestion.pipeline import IngestionPipeline
 from src.jobs.ingestion_worker import IngestionJobManager
 from src.retrieval.retriever import Retriever
+from src.utils.telemetry import (
+    TelemetryCollector,
+    TelemetrySpan,
+    calculate_query_cost,
+    count_tokens,
+    get_aggregated_metrics,
+    record_query_telemetry,
+)
 
 # Global singletons
 embedder: LocalEmbedder | None = None
@@ -60,20 +75,110 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Enterprise RAG Pipeline API", version="2.4.0", lifespan=lifespan)
+# ── Correlation ID & Rate Limiting Infrastructure ───────────────────────────
 
-# Setup CORS
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """Attaches or preserves X-Request-ID, injects into Loguru context, and echoes in response headers."""
+
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = req_id
+        with logger.contextualize(request_id=req_id):
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = req_id
+            return response
+
+
+class SlidingWindowRateLimiter:
+    """Thread-safe in-memory sliding window rate limiter tracking request timestamps per client."""
+
+    def __init__(self, window_seconds: float = 60.0):
+        self.window = window_seconds
+        self.history: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, client_key: str, limit: int | None = None) -> tuple[bool, int]:
+        """Check if request is within allowed rate. Returns (is_allowed, retry_after_seconds)."""
+        now = time.time()
+        cutoff = now - self.window
+        active_limit = limit if limit is not None else settings.rate_limit_requests_per_minute
+
+        with self._lock:
+            timestamps = self.history.get(client_key, [])
+            valid_timestamps = [t for t in timestamps if t > cutoff]
+            if len(valid_timestamps) >= active_limit:
+                oldest = valid_timestamps[0]
+                retry_after = max(1, int(math.ceil(self.window - (now - oldest))))
+                self.history[client_key] = valid_timestamps
+                return False, retry_after
+
+            valid_timestamps.append(now)
+            self.history[client_key] = valid_timestamps
+            return True, 0
+
+    def reset(self) -> None:
+        """Clear rate limiter history (useful for test resets)."""
+        with self._lock:
+            self.history.clear()
+
+
+rate_limiter = SlidingWindowRateLimiter(window_seconds=60.0)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Enforces sliding-window rate limit returning 429 Too Many Requests when threshold exceeded."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not settings.rate_limit_enabled:
+            return await call_next(request)
+
+        path = request.url.path
+        if (
+            path.startswith("/docs")
+            or path.startswith("/redoc")
+            or path == "/openapi.json"
+            or path == "/health"
+        ):
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        allowed, retry_after = rate_limiter.is_allowed(client_ip)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": f"Rate limit exceeded. Try again in {retry_after} seconds."},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        return await call_next(request)
+
+
+app = FastAPI(title="Enterprise RAG Pipeline API", version="2.5.0", lifespan=lifespan)
+
+# Add Middleware Stack
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
+    expose_headers=["*", "X-Request-ID"],
 )
 
 # Mount Authentication & RBAC Router
 app.include_router(auth_router)
+
+
+# ── Health & Diagnostics ───────────────────────────────────────────────────
+
+
+@app.get("/health")
+async def health_check():
+    """Liveness probe for Docker container and orchestrator health checks."""
+    return {"status": "ok", "version": "2.5.0"}
 
 
 class QueryRequest(BaseModel):
@@ -82,44 +187,43 @@ class QueryRequest(BaseModel):
     mode: str = "hybrid_rerank"
 
 
-def _record_telemetry(
+def _record_telemetry_collector(
     req: QueryRequest,
     user: User | None,
     provider: str,
     generator: Any,
-    outcome: dict[str, Any],
-    total_latency_ms: float,
-    abstained: bool | None = None,
-    reason: str | None = None,
+    telemetry: dict[str, Any],
+    cited_doc_ids: list[str],
 ) -> None:
-    """Record query execution telemetry to relational database."""
-    try:
-        user_id = user.id if user else None
-        org_id = user.org_id if user else "default_org"
-        is_abstained = abstained if abstained is not None else outcome.get("abstained", False)
-        abstention_reason = reason if reason is not None else outcome.get("abstention_reason")
+    """Record query execution telemetry to relational database using TelemetryCollector output."""
+    raw_model = getattr(generator, "model_name", None)
+    model_name = raw_model if isinstance(raw_model, str) else provider
 
-        raw_model = getattr(generator, "model_name", None)
-        model_name = raw_model if isinstance(raw_model, str) else provider
+    telemetry_data = {
+        "user_id": user.id if user else None,
+        "org_id": user.org_id if user else "default_org",
+        "query_text": req.query,
+        "retrieval_mode": req.mode,
+        "llm_provider": provider,
+        "llm_model": model_name,
+        "embed_latency_ms": telemetry.get("embed_latency_ms", 0.0),
+        "search_latency_ms": telemetry.get("search_latency_ms", 0.0),
+        "rerank_latency_ms": telemetry.get("rerank_latency_ms", 0.0),
+        "llm_latency_ms": telemetry.get("llm_latency_ms", 0.0),
+        "total_latency_ms": telemetry.get("total_latency_ms", 0.0),
+        "retrieved_count": telemetry.get("retrieved_count", 0),
+        "top_rerank_score": telemetry.get("top_rerank_score"),
+        "abstained": telemetry.get("abstained", False),
+        "abstention_reason": telemetry.get("abstention_reason"),
+        "prompt_tokens": telemetry.get("prompt_tokens", 0),
+        "completion_tokens": telemetry.get("completion_tokens", 0),
+        "estimated_cost_usd": telemetry.get("estimated_cost_usd", 0.0),
+        "cited_doc_ids": cited_doc_ids,
+    }
+    record_query_telemetry(SessionLocal, telemetry_data)
 
-        with SessionLocal() as db_session:
-            record = QueryTelemetry(
-                user_id=user_id,
-                org_id=org_id,
-                query_text=req.query,
-                retrieval_mode=req.mode,
-                llm_provider=provider,
-                llm_model=model_name,
-                total_latency_ms=total_latency_ms,
-                retrieved_count=len(outcome.get("results", [])),
-                top_rerank_score=outcome.get("top_score"),
-                abstained=is_abstained,
-                abstention_reason=abstention_reason,
-            )
-            db_session.add(record)
-            db_session.commit()
-    except Exception as exc:
-        logger.warning("Query telemetry recording skipped: {}", exc)
+
+# ── PDF Upload & Job Polling ────────────────────────────────────────────────
 
 
 @app.post("/api/upload", status_code=202)
@@ -134,7 +238,7 @@ async def upload_pdf(
     ensure_services_initialized()
 
     # RBAC upload permission: ADMIN and MANAGER only
-    if current_user.role.upper() not in {"ADMIN", "MANAGER"}:
+    if current_user.role not in {"ADMIN", "MANAGER"}:
         raise HTTPException(
             status_code=403,
             detail="Forbidden: uploading documents requires ADMIN or MANAGER role.",
@@ -210,7 +314,7 @@ async def delete_document(
 ):
     """Remove all vectors for a document from Qdrant and mark record DELETED (ADMIN only)."""
     ensure_services_initialized()
-    if current_user.role.upper() != "ADMIN":
+    if current_user.role != "ADMIN":
         raise HTTPException(
             status_code=403,
             detail="Forbidden: deleting documents requires ADMIN role.",
@@ -226,8 +330,15 @@ async def delete_document(
     return deleted
 
 
-def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
-    """Run synchronous PyTorch hybrid retrieval + Pre-Retrieval RBAC + Two-Tier Abstention Gate + LLM generation."""
+# ── Query Pipeline with Telemetry Spans & Token Accounting ─────────────────
+
+
+def _execute_query_sync(
+    req: QueryRequest,
+    user: User | None = None,
+    request_id: str | None = None,
+) -> dict:
+    """Run synchronous hybrid retrieval + RBAC filter + Stage Spans + Abstention Gate + LLM generation."""
     ensure_services_initialized()
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="Query text cannot be empty.")
@@ -240,7 +351,7 @@ def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
             status_code=400, detail=f"Generator init failed: {exc}"
         ) from exc
 
-    start_total = time.perf_counter()
+    collector = TelemetryCollector(request_id=request_id)
     rbac_filter = build_qdrant_rbac_filter(user) if user else None
 
     try:
@@ -251,12 +362,21 @@ def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
             mode=req.mode,
             query_filter=rbac_filter,
             user=user,
+            collector=collector,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    top_score = outcome.get("top_score")
+    collector.retrieved_count = len(outcome.get("results", []))
+    collector.top_rerank_score = top_score
+
     if outcome["abstained"]:
         reason = outcome["abstention_reason"]
+        collector.abstained = True
+        collector.abstention_reason = reason
+        collector.finalize_total()
+
         if reason in {"RBAC_EMPTY_RETRIEVAL", "EMPTY_RETRIEVAL"}:
             answer_msg = (
                 "I cannot answer this based on the provided documents. "
@@ -265,46 +385,80 @@ def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
         else:
             answer_msg = "I cannot answer this based on the provided documents."
 
-        total_ms = round((time.perf_counter() - start_total) * 1000.0, 2)
-        _record_telemetry(req, user, provider, generator, outcome, total_ms)
+        telemetry_dict = collector.to_dict()
+        _record_telemetry_collector(req, user, provider, generator, telemetry_dict, [])
+
         return {
             "answer": answer_msg,
             "citations": [],
             "abstained": True,
             "abstention_reason": reason,
             "mode": req.mode,
-            "top_score": outcome.get("top_score"),
+            "top_score": top_score,
+            "request_id": collector.request_id,
+            "telemetry": telemetry_dict,
         }
 
-    answer = generator.generate(req.query, outcome["context"])
+    # Generation stage with timing and token counting
+    t_llm_start = time.perf_counter()
+    try:
+        gen_result = None
+        if hasattr(generator, "generate_with_telemetry"):
+            try:
+                raw_res = generator.generate_with_telemetry(req.query, outcome["context"])
+                if isinstance(raw_res, tuple) and len(raw_res) == 3 and isinstance(raw_res[0], str):
+                    gen_result = raw_res
+            except Exception:
+                gen_result = None
+
+        if gen_result is not None:
+            answer, prompt_tokens, completion_tokens = gen_result
+        else:
+            answer = generator.generate(req.query, outcome["context"])
+            prompt_tokens = count_tokens(outcome["context"] + " " + req.query)
+            completion_tokens = count_tokens(answer)
+    except Exception as exc:
+        logger.error(f"Generation error: {exc}")
+        answer = "Error generating response."
+        prompt_tokens = count_tokens(req.query)
+        completion_tokens = 0
+
+    collector.record_stage("llm", (time.perf_counter() - t_llm_start) * 1000.0)
+    collector.prompt_tokens = prompt_tokens
+    collector.completion_tokens = completion_tokens
+    model_name = getattr(generator, "model_name", provider)
+    if not isinstance(model_name, str):
+        model_name = provider
+    collector.estimated_cost_usd = calculate_query_cost(
+        provider, model_name, prompt_tokens, completion_tokens
+    )
 
     # Tier-2 Post-LLM Abstention Gate
     if "cannot answer this based on the provided documents" in answer.lower():
-        total_ms = round((time.perf_counter() - start_total) * 1000.0, 2)
-        _record_telemetry(
-            req,
-            user,
-            provider,
-            generator,
-            outcome,
-            total_ms,
-            abstained=True,
-            reason="LLM_ABSTAIN",
-        )
+        collector.abstained = True
+        collector.abstention_reason = "LLM_ABSTAIN"
+        collector.finalize_total()
+        telemetry_dict = collector.to_dict()
+        _record_telemetry_collector(req, user, provider, generator, telemetry_dict, [])
         return {
             "answer": answer,
             "citations": [],
             "abstained": True,
             "abstention_reason": "LLM_ABSTAIN",
             "mode": req.mode,
-            "top_score": outcome.get("top_score"),
+            "top_score": top_score,
+            "request_id": collector.request_id,
+            "telemetry": telemetry_dict,
         }
 
     citations = []
+    cited_doc_ids: list[str] = []
     for hit in outcome["results"]:
         meta = hit.get("metadata", {})
         page_start = meta.get("page_number", "?")
         page_end = meta.get("page_end", page_start)
+        doc_id = meta.get("file_hash") or meta.get("source_pdf", "Unknown")
+        cited_doc_ids.append(str(doc_id))
         citations.append(
             {
                 "pdf": meta.get("source_pdf", "Unknown"),
@@ -316,8 +470,9 @@ def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
             }
         )
 
-    total_ms = round((time.perf_counter() - start_total) * 1000.0, 2)
-    _record_telemetry(req, user, provider, generator, outcome, total_ms)
+    collector.finalize_total()
+    telemetry_dict = collector.to_dict()
+    _record_telemetry_collector(req, user, provider, generator, telemetry_dict, cited_doc_ids)
 
     return {
         "answer": answer,
@@ -325,20 +480,46 @@ def _execute_query_sync(req: QueryRequest, user: User | None = None) -> dict:
         "abstained": False,
         "abstention_reason": None,
         "mode": req.mode,
-        "top_score": outcome.get("top_score"),
+        "top_score": top_score,
+        "request_id": collector.request_id,
+        "telemetry": telemetry_dict,
     }
 
 
 @app.post("/api/query")
 async def query_pipeline(
     req: QueryRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    """Execute grounded RAG query on the threadpool scoped by pre-retrieval RBAC filter."""
-    return await run_in_threadpool(_execute_query_sync, req, current_user)
+    """Execute grounded RAG query on threadpool scoped by pre-retrieval RBAC filter with stage telemetry."""
+    req_id = (
+        getattr(request.state, "request_id", None)
+        or request.headers.get("X-Request-ID")
+        or str(uuid.uuid4())
+    )
+    return await run_in_threadpool(_execute_query_sync, req, current_user, req_id)
 
 
-# Create static directory if it doesn't exist so mounting won't crash
+# ── Observability & Telemetry Metrics Endpoint ─────────────────────────────
+
+
+@app.get("/api/metrics")
+async def get_metrics(
+    org_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return aggregated latency percentiles, token usage, and cost telemetry."""
+    target_org_id = org_id
+    if current_user.role != "ADMIN":
+        target_org_id = current_user.org_id
+
+    return await run_in_threadpool(get_aggregated_metrics, db, target_org_id)
+
+
+# ── Static Web UI ──────────────────────────────────────────────────────────
+
 os.makedirs("src/api/static", exist_ok=True)
 app.mount("/", StaticFiles(directory="src/api/static", html=True), name="static")
 

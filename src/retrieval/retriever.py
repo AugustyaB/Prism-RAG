@@ -27,6 +27,7 @@ class Retriever:
         mode: str = "hybrid_rerank",
         query_filter: Any = None,
         user: Any = None,
+        collector: Any = None,
     ) -> dict[str, Any]:
         """Execute hybrid retrieval, enforce Tier-1 Pre-LLM Abstention, and format Parent context blocks."""
         logger.info("Retrieving context for query: '{}' (mode={})", query, mode)
@@ -42,6 +43,7 @@ class Retriever:
             final_k=final_k,
             mode=mode,
             query_filter=active_filter,
+            collector=collector,
         )
 
         # Tier 1a: Empty Retrieval Abstention

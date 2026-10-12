@@ -1,0 +1,32 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+    environment:
+      - RAG_DATABASE_URL=sqlite:///./data/metadata.db
+      - RAG_VECTOR_DB_DIR=./data/vectordb
+      - RAG_QDRANT_COLLECTION_V2=rag_documents_v2
+      - RAG_QDRANT_HOST=qdrant
+      - RAG_QDRANT_PORT=6333
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:

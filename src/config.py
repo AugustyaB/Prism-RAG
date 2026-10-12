@@ -160,6 +160,29 @@ class Settings(BaseSettings):
         description="Enforce JWT authentication and tenant filtering",
     )
 
+    # --- Observability, Telemetry & Rate Limiting ---
+    telemetry_enabled: bool = Field(
+        default=True,
+        description="Enable per-query latency and token cost persistence",
+    )
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable request rate limiting",
+    )
+    rate_limit_requests_per_minute: int = Field(
+        default=60,
+        description="Max allowed requests per minute per IP/user",
+    )
+    model_pricing_catalog: dict[str, dict[str, float]] = Field(
+        default={
+            "gemini-2.5-flash": {"prompt_per_1m": 0.075, "completion_per_1m": 0.30},
+            "gpt-oss-20b": {"prompt_per_1m": 0.0, "completion_per_1m": 0.0},
+            "llama3": {"prompt_per_1m": 0.0, "completion_per_1m": 0.0},
+            "gpt-4o-mini": {"prompt_per_1m": 0.15, "completion_per_1m": 0.60},
+        },
+        description="Model pricing per 1M tokens in USD for cost estimation",
+    )
+
     # --- LLMs / Generation ---
     llm_provider: str = Field(
         default="lmstudio",

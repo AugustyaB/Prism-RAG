@@ -35,9 +35,16 @@ class OcrEngine:
             gpu: Use GPU for OCR. Defaults to settings.ocr_gpu.
             languages: OCR languages. Defaults to settings.ocr_languages.
         """
-        import torch
         requested_gpu = gpu if gpu is not None else settings.ocr_gpu
-        self.gpu = requested_gpu and torch.cuda.is_available()
+        cuda_available = False
+        try:
+            import torch
+            cuda_available = torch.cuda.is_available()
+        except (ImportError, OSError) as e:
+            logger.warning("Could not check CUDA availability via Torch ({}); defaulting to CPU.", e)
+            cuda_available = False
+
+        self.gpu = requested_gpu and cuda_available
         if requested_gpu and not self.gpu:
             logger.warning("GPU requested, but Torch is not compiled with CUDA. Falling back to CPU.")
             

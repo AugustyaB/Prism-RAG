@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import time
 import uuid
 
 from loguru import logger
@@ -209,6 +210,7 @@ class VectorStore:
         final_k: int = 4,
         mode: str = "hybrid_rerank",
         query_filter: models.Filter | None = None,
+        collector: Any = None,
     ) -> list[dict[str, Any]]:
         """Execute multi-mode retrieval (`vector_only`, `bm25_only`, `hybrid_rrf`, `hybrid_rerank`)
         with Reciprocal Rank Fusion (`k=60`), Parent Block Deduplication, and Cross-Encoder Reranking.
@@ -221,16 +223,21 @@ class VectorStore:
 
         dense_hits: list[ Any ] = []
         sparse_hits: list[ Any ] = []
+        t_embed_ms = 0.0
+        t_search_ms = 0.0
 
         # 1. Stage-1 Dense Retrieval (uses BGE query instruction prefix via embed_query)
         if mode in {"vector_only", "hybrid_rrf", "hybrid_rerank"}:
             try:
+                t0 = time.perf_counter()
                 query_emb = (
                     self.embedder.embed_query(query)
                     if hasattr(self.embedder, "embed_query")
                     else self.embedder.embed_text(query)
                 )
+                t_embed_ms += (time.perf_counter() - t0) * 1000.0
                 if query_emb:
+                    t1 = time.perf_counter()
                     dense_resp = self.client.query_points(
                         collection_name=self.collection_name,
                         query=query_emb,
@@ -239,6 +246,7 @@ class VectorStore:
                         limit=initial_k,
                         with_payload=True,
                     )
+                    t_search_ms += (time.perf_counter() - t1) * 1000.0
                     dense_hits = list(dense_resp.points)
             except Exception as exc:
                 logger.error("Dense search leg failed: {}", exc)
@@ -246,8 +254,11 @@ class VectorStore:
         # 2. Stage-1 Sparse BM25 IDF Retrieval
         if mode in {"bm25_only", "hybrid_rrf", "hybrid_rerank"}:
             try:
+                t0 = time.perf_counter()
                 sp_idx, sp_val = self.sparse_encoder.encode_query(query)
+                t_embed_ms += (time.perf_counter() - t0) * 1000.0
                 if sp_idx:
+                    t1 = time.perf_counter()
                     sparse_resp = self.client.query_points(
                         collection_name=self.collection_name,
                         query=models.SparseVector(indices=sp_idx, values=sp_val),
@@ -256,9 +267,14 @@ class VectorStore:
                         limit=initial_k,
                         with_payload=True,
                     )
+                    t_search_ms += (time.perf_counter() - t1) * 1000.0
                     sparse_hits = list(sparse_resp.points)
             except Exception as exc:
                 logger.error("Sparse BM25 search leg failed: {}", exc)
+
+        if collector:
+            collector.record_stage("embed", t_embed_ms)
+            collector.record_stage("search", t_search_ms)
 
         # 3. Combine / Score Stage-1 Candidates
         candidates: list[dict[str, Any]] = []
@@ -323,6 +339,7 @@ class VectorStore:
                 break
 
         # 5. Stage-2 Cross-Encoder Reranking (only for mode == "hybrid_rerank")
+        t_rerank_ms = 0.0
         if mode == "hybrid_rerank":
             rerank_texts = [
                 (c["hit"].payload or {}).get("parent_text")
@@ -330,7 +347,9 @@ class VectorStore:
                 for c in deduped_candidates
             ]
             try:
+                t0 = time.perf_counter()
                 rerank_scores = list(self.embedder.rerank(query, rerank_texts))
+                t_rerank_ms = (time.perf_counter() - t0) * 1000.0
                 if len(rerank_scores) != len(deduped_candidates):
                     raise RuntimeError(
                         f"Reranker returned {len(rerank_scores)} scores for {len(deduped_candidates)} candidates"
@@ -340,6 +359,9 @@ class VectorStore:
                 rerank_scores = [c["stage1_score"] for c in deduped_candidates]
         else:
             rerank_scores = [c["stage1_score"] for c in deduped_candidates]
+
+        if collector:
+            collector.record_stage("rerank", t_rerank_ms)
 
         enriched_results: list[dict[str, Any]] = []
         for item, final_score in zip(deduped_candidates, rerank_scores):

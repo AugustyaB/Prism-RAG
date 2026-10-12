@@ -35,6 +35,16 @@ class BaseGenerator(ABC):
             "Answer:"
         )
 
+    def generate_with_telemetry(self, query: str, context: str) -> tuple[str, int, int]:
+        """Generate answer while measuring and counting prompt and completion tokens."""
+        from src.utils.telemetry import count_tokens
+
+        prompt = self._build_prompt(query, context)
+        prompt_tokens = count_tokens(prompt)
+        answer = self.generate(query, context)
+        completion_tokens = count_tokens(answer)
+        return answer, prompt_tokens, completion_tokens
+
 
 class OllamaGenerator(BaseGenerator):
     """Local LLM interaction using Ollama HTTP endpoints."""
