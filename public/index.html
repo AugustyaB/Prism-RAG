@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prism-RAG | Enterprise Agentic Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=8" />
+</head>
+<body>
+  <!-- Ambient Background Glows -->
+  <div class="ambient-glow top-left"></div>
+  <div class="ambient-glow bottom-right"></div>
+
+  <!-- ========================================== -->
+  <!-- TOP NAVIGATION BAR                         -->
+  <!-- ========================================== -->
+  <header class="top-nav">
+    <div class="top-nav-brand">
+      <svg class="brand-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+        <polyline points="2 12 12 17 22 12"></polyline>
+      </svg>
+      <div class="brand-text">
+        <div class="brand-title-row">
+          <h1>Prism-RAG Enterprise Studio</h1>
+          <span id="showcase-badge" class="showcase-badge" style="display: none;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+            <span>CLOUD DEMO</span>
+          </span>
+        </div>
+        <span class="connection-indicator">
+          <span id="connection-status" class="status-dot status-online"></span>
+          <span class="status-label">Connected</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- Scrollable Persona / Role Switcher Bar with Chevron Controls -->
+    <div class="persona-switcher-wrapper">
+      <button id="persona-scroll-left" class="persona-scroll-btn" type="button" aria-label="Scroll personas left" title="Scroll left">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+      <nav id="persona-switcher" class="persona-switcher" aria-label="Persona switcher">
+        <button class="persona-btn active" data-persona="admin_default" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4z"></path><circle cx="12" cy="8" r="4"></circle><path d="M16 3l2 2-4 4"></path></svg>
+          <span class="persona-label">Admin (Default)</span>
+        </button>
+        <button class="persona-btn" data-persona="manager_default" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span class="persona-label">Manager (Default)</span>
+        </button>
+        <button class="persona-btn" data-persona="analyst_default" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          <span class="persona-label">Analyst (Default)</span>
+        </button>
+        <button class="persona-btn" data-persona="viewer_default" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <span class="persona-label">Viewer (Default)</span>
+        </button>
+        <span class="persona-divider"></span>
+        <button class="persona-btn" data-persona="admin_tenant_b" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4z"></path><circle cx="12" cy="8" r="4"></circle><path d="M16 3l2 2-4 4"></path></svg>
+          <span class="persona-label">Admin (Tenant B)</span>
+        </button>
+        <button class="persona-btn" data-persona="viewer_tenant_b" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <span class="persona-label">Viewer (Tenant B)</span>
+        </button>
+      </nav>
+      <button id="persona-scroll-right" class="persona-scroll-btn" type="button" aria-label="Scroll personas right" title="Scroll right">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+    </div>
+
+    <div class="top-nav-actions">
+      <div id="active-session-indicator" class="session-indicator-badge" title="Active conversational session">
+        <span class="session-dot"></span>
+        <span id="active-session-title" class="session-title-text">Session: New</span>
+      </div>
+      <button id="new-session-btn" class="session-nav-btn" type="button" aria-label="Start new chat session" title="Start new conversation session">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>New Session</span>
+      </button>
+
+      <button id="user-profile-btn" class="profile-avatar-btn" type="button" aria-label="Open User Profile & Clearances" title="Profile & Clearances">
+        <div id="active-user-badge" class="user-badge">
+          <div id="avatar-initials" class="avatar-initials">AD</div>
+          <span class="badge-email">admin@default.org</span>
+          <span class="badge-org">default</span>
+          <span class="badge-role role-admin">ADMIN</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="profile-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </button>
+      <button id="clear-chat-btn" class="icon-btn" type="button" aria-label="Clear chat history" title="Clear chat history">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+      </button>
+      <button id="toggle-metrics-btn" class="icon-btn" type="button" aria-label="Toggle observability metrics" title="Observability telemetry">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"></line>
+          <line x1="12" y1="20" x2="12" y2="4"></line>
+          <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
+      </button>
+      <a id="github-link-btn" href="https://github.com/AugustyaB/Prism-RAG" target="_blank" rel="noopener noreferrer" class="icon-btn github-btn" aria-label="View on GitHub" title="View Prism-RAG source repository on GitHub">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+        </svg>
+      </a>
+    </div>
+  </header>
+
+  <!-- ========================================== -->
+  <!-- MAIN APPLICATION LAYOUT                    -->
+  <!-- ========================================== -->
+  <main class="app-container">
+
+    <!-- =============================== -->
+    <!-- SIDEBAR: Ingestion & Config     -->
+    <!-- =============================== -->
+    <aside id="sidebar" class="sidebar">
+
+      <!-- Document Ingestion Section -->
+      <section class="sidebar-section">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+          Document Ingestion
+        </h3>
+
+        <!-- Cloud Demo Notice Banner -->
+        <div id="cloud-demo-banner" class="cloud-demo-banner" style="display: none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          <span><strong>Cloud Showcase:</strong> Pre-indexed with 3 benchmark PDFs. Clone the repo for local GPU EasyOCR & full PDF ingestion.</span>
+        </div>
+
+        <!-- Dropzone -->
+        <div class="upload-area" id="drop-zone">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <p class="dropzone-text">Drag and drop PDFs here</p>
+          <span class="text-sm text-dim">or click to browse</span>
+          <input type="file" id="file-input" accept=".pdf" multiple hidden />
+        </div>
+
+        <!-- Document Visibility Selector -->
+        <div class="form-group">
+          <label class="form-label" for="doc-visibility">Visibility</label>
+          <select id="doc-visibility" class="form-select">
+            <option value="ORG" selected>ORG (Organization Only)</option>
+            <option value="PUBLIC">PUBLIC (All Tenants)</option>
+            <option value="RESTRICTED">RESTRICTED (Selected Roles)</option>
+          </select>
+        </div>
+
+        <!-- Allowed Roles Checkboxes -->
+        <fieldset id="doc-roles" class="form-fieldset">
+          <legend class="form-label">Allowed Roles</legend>
+          <div class="checkbox-row">
+            <label class="checkbox-label role-checkbox">
+              <input type="checkbox" value="ADMIN" checked disabled />
+              <span class="role-tag role-admin">ADMIN</span>
+            </label>
+            <label class="checkbox-label role-checkbox">
+              <input type="checkbox" value="MANAGER" checked />
+              <span class="role-tag role-manager">MANAGER</span>
+            </label>
+            <label class="checkbox-label role-checkbox">
+              <input type="checkbox" value="ANALYST" />
+              <span class="role-tag role-analyst">ANALYST</span>
+            </label>
+            <label class="checkbox-label role-checkbox">
+              <input type="checkbox" value="VIEWER" />
+              <span class="role-tag role-viewer">VIEWER</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <!-- Async Multi-File Upload & Ingestion Queue Status Card -->
+        <div id="upload-status-card" class="upload-status-card hidden">
+          <div class="progress-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
+            <span id="upload-status-text" class="progress-label">Preparing...</span>
+          </div>
+          <div class="progress-track">
+            <div id="upload-progress-bar" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <span id="upload-progress-percent" class="progress-percent">0%</span>
+          <!-- 429 Cooldown Banner -->
+          <div id="upload-cooldown-banner" class="upload-cooldown-banner hidden">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span id="upload-cooldown-text">Rate limit cooldown · resuming in 5s...</span>
+          </div>
+          <!-- Multi-File Ingestion Queue List -->
+          <div id="upload-queue-list" class="upload-queue-list"></div>
+        </div>
+      </section>
+
+      <!-- Active Document Catalog -->
+      <section id="doc-catalog-section" class="sidebar-section">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          Document Catalog
+        </h3>
+        <div id="doc-list" class="doc-list">
+          <p class="text-dim text-sm">No documents indexed yet.</p>
+        </div>
+      </section>
+
+      <!-- Retrieval & Generation Configuration -->
+      <section class="sidebar-section">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          Retrieval Configuration
+        </h3>
+
+        <!-- Retrieval Mode Selector Pills -->
+        <div id="mode-selector" class="pill-group">
+          <button class="pill-btn active" data-mode="hybrid_rerank" type="button">Hybrid Rerank (Optimal)</button>
+          <button class="pill-btn" data-mode="hybrid_rrf" type="button">Hybrid RRF (Fast)</button>
+          <button class="pill-btn" data-mode="vector_only" type="button">Dense Vector Only</button>
+          <button class="pill-btn" data-mode="bm25_only" type="button">BM25 Lexical Only</button>
+        </div>
+
+        <!-- Model Engine Toggle -->
+        <h3 class="section-title" style="margin-top: 10px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+          Model Engine
+        </h3>
+        <div id="provider-selector" class="toggle-container">
+          <label class="toggle-btn active" data-provider="lmstudio">
+            <input type="radio" name="llm_provider" value="lmstudio" checked hidden />
+            GPT-OSS (Local)
+          </label>
+          <label class="toggle-btn" data-provider="gemini">
+            <input type="radio" name="llm_provider" value="gemini" hidden />
+            Gemini 2.5 (Cloud)
+          </label>
+        </div>
+
+        <!-- Cloud Gemini Runtime Configuration Box -->
+        <div id="gemini-config-panel" class="gemini-config-box">
+          <div class="gemini-config-header">
+            <span class="form-label" style="margin: 0;">Cloud Gemini API Key</span>
+            <span id="gemini-key-status" class="status-chip chip-inactive">No Key Set</span>
+          </div>
+          <div class="gemini-input-row">
+            <input type="password" id="gemini-api-key" class="form-input" placeholder="Paste AI Studio Key (AIzaSy...)" autocomplete="off" />
+            <button type="button" id="save-gemini-key-btn" class="persona-btn">Save</button>
+          </div>
+          <p class="gemini-helper-text">Dynamic runtime API key for Google AI Studio Cloud synthesis.</p>
+        </div>
+      </section>
+    </aside>
+
+    <!-- =============================== -->
+    <!-- MAIN CHAT WORKSPACE             -->
+    <!-- =============================== -->
+    <section id="chat-workspace" class="chat-workspace">
+      <!-- Conversational Workspace Header Strip -->
+      <div class="chat-header-strip">
+        <div class="chat-header-left">
+          <div class="session-status-pill">
+            <span class="pulse-indicator"></span>
+            <span id="session-display-title" class="session-label">Multi-Turn Session Active</span>
+          </div>
+          <span id="session-turn-counter" class="session-turn-tag">0 turns</span>
+        </div>
+        <div class="chat-header-right">
+          <div id="reasoning-trace" class="global-reasoning-status">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span class="reasoning-chip-label">Agent Reasoning Active</span>
+          </div>
+          <button id="workspace-new-session-btn" class="session-action-btn" type="button" title="Start new conversational session">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>New Chat</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chat-history" id="chat-history">
+        <!-- Empty state placeholder -->
+        <div class="empty-state">
+          <div class="icon-pulse">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+          <h2>Ready to analyze</h2>
+          <p>Upload a document and ask questions to begin grounded retrieval.</p>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <form id="query-form" class="input-wrapper">
+          <input type="text" id="query-input" placeholder="Ask about your documents..." autocomplete="off" />
+          <button type="submit" id="send-btn" aria-label="Send query">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"></line>
+              <polyline points="5 12 12 5 19 12"></polyline>
+            </svg>
+          </button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================== -->
+  <!-- OBSERVABILITY & TELEMETRY DRAWER MODAL     -->
+  <!-- ========================================== -->
+  <div id="metrics-drawer" class="drawer-overlay hidden">
+    <div class="drawer-backdrop"></div>
+    <aside class="drawer-panel">
+      <header class="drawer-header">
+        <h2 class="drawer-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          Observability Metrics
+        </h2>
+        <div class="drawer-actions">
+          <button id="reset-metrics-btn" class="persona-btn" type="button" aria-label="Reset metrics" title="Reset telemetry metrics (Admin)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Reset Metrics</span>
+          </button>
+          <button id="refresh-metrics-btn" class="icon-btn" type="button" aria-label="Refresh metrics">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
+          <button id="close-metrics-btn" class="icon-btn" type="button" aria-label="Close metrics drawer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="drawer-body">
+        <!-- Latency Percentiles -->
+        <section class="metric-group">
+          <h4 class="metric-group-title">Latency Percentiles (ms)</h4>
+          <div class="metric-grid">
+            <div class="metric-card">
+              <span class="metric-label">Total</span>
+              <div class="metric-values">
+                <span class="metric-val" data-metric="total_p50">--</span><span class="metric-unit">p50</span>
+                <span class="metric-val" data-metric="total_p90">--</span><span class="metric-unit">p90</span>
+                <span class="metric-val" data-metric="total_p95">--</span><span class="metric-unit">p95</span>
+                <span class="metric-val" data-metric="total_avg">--</span><span class="metric-unit">avg</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Embed</span>
+              <div class="metric-values">
+                <span class="metric-val" data-metric="embed_p50">--</span><span class="metric-unit">p50</span>
+                <span class="metric-val" data-metric="embed_p90">--</span><span class="metric-unit">p90</span>
+                <span class="metric-val" data-metric="embed_p95">--</span><span class="metric-unit">p95</span>
+                <span class="metric-val" data-metric="embed_avg">--</span><span class="metric-unit">avg</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Search</span>
+              <div class="metric-values">
+                <span class="metric-val" data-metric="search_p50">--</span><span class="metric-unit">p50</span>
+                <span class="metric-val" data-metric="search_p90">--</span><span class="metric-unit">p90</span>
+                <span class="metric-val" data-metric="search_p95">--</span><span class="metric-unit">p95</span>
+                <span class="metric-val" data-metric="search_avg">--</span><span class="metric-unit">avg</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Rerank</span>
+              <div class="metric-values">
+                <span class="metric-val" data-metric="rerank_p50">--</span><span class="metric-unit">p50</span>
+                <span class="metric-val" data-metric="rerank_p90">--</span><span class="metric-unit">p90</span>
+                <span class="metric-val" data-metric="rerank_p95">--</span><span class="metric-unit">p95</span>
+                <span class="metric-val" data-metric="rerank_avg">--</span><span class="metric-unit">avg</span>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">LLM</span>
+              <div class="metric-values">
+                <span class="metric-val" data-metric="llm_p50">--</span><span class="metric-unit">p50</span>
+                <span class="metric-val" data-metric="llm_p90">--</span><span class="metric-unit">p90</span>
+                <span class="metric-val" data-metric="llm_p95">--</span><span class="metric-unit">p95</span>
+                <span class="metric-val" data-metric="llm_avg">--</span><span class="metric-unit">avg</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Token & Cost -->
+        <section class="metric-group">
+          <h4 class="metric-group-title">Token Consumption</h4>
+          <div class="metric-grid metric-grid-3">
+            <div class="metric-card">
+              <span class="metric-label">Prompt</span>
+              <span class="metric-val-lg" data-metric="tokens_prompt">--</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Completion</span>
+              <span class="metric-val-lg" data-metric="tokens_completion">--</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Total</span>
+              <span class="metric-val-lg" data-metric="tokens_total">--</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="metric-group">
+          <h4 class="metric-group-title">Cost & Query Stats</h4>
+          <div class="metric-grid metric-grid-4">
+            <div class="metric-card">
+              <span class="metric-label">Est. USD Cost</span>
+              <span class="metric-val-lg metric-accent" data-metric="estimated_cost">--</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Total Queries</span>
+              <span class="metric-val-lg" data-metric="total_queries">--</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Abstained</span>
+              <span class="metric-val-lg metric-danger" data-metric="abstained_count">--</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Abstention Rate</span>
+              <span class="metric-val-lg metric-danger" data-metric="abstention_rate">--%</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- PROFILE & CLEARANCES SLIDING DRAWER        -->
+  <!-- ========================================== -->
+  <aside id="profile-drawer" class="drawer-overlay hidden" aria-labelledby="profile-drawer-title">
+    <div class="drawer-backdrop" id="profile-drawer-backdrop"></div>
+    <div class="drawer-panel profile-drawer-panel">
+      <header class="drawer-header">
+        <div class="drawer-title" id="profile-drawer-title">
+          <div class="profile-avatar-large" id="drawer-avatar-badge">AD</div>
+          <div class="profile-header-info">
+            <h3 id="drawer-user-email" class="profile-email-title">admin@default.org</h3>
+            <div class="profile-meta-row">
+              <span id="drawer-user-org" class="profile-org-tag">Tenant: default</span>
+              <span id="drawer-user-role" class="badge-role role-admin">ADMIN</span>
+            </div>
+          </div>
+        </div>
+        <button id="close-profile-btn" class="icon-btn" type="button" aria-label="Close profile drawer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </header>
+
+      <div class="drawer-body">
+        <!-- Section 1: Data Access Clearances -->
+        <section class="profile-section">
+          <h4 class="metric-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            Data Access Clearances
+          </h4>
+          <div class="clearances-grid">
+            <div class="clearance-card clearance-public">
+              <span class="clearance-level">PUBLIC</span>
+              <span class="clearance-status">Full Access</span>
+            </div>
+            <div class="clearance-card clearance-org">
+              <span class="clearance-level">ORG (Tenant)</span>
+              <span class="clearance-status">Isolated</span>
+            </div>
+            <div class="clearance-card clearance-restricted" id="clearance-restricted-card">
+              <span class="clearance-level">RESTRICTED</span>
+              <span id="clearance-restricted-status" class="clearance-status">Granted</span>
+            </div>
+          </div>
+          <div class="clearance-summary-card">
+            <div class="summary-stat-row">
+              <span class="stat-label">Accessible Documents</span>
+              <span id="accessible-docs-count" class="stat-value">--</span>
+            </div>
+            <div class="summary-capabilities" id="role-capabilities-chips">
+              <!-- Populated via script.js -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 2: Team Members (ADMIN & MANAGER only) -->
+        <section id="team-management-section" class="profile-section hidden">
+          <h4 class="metric-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            Team & RBAC Management
+          </h4>
+          <div id="team-users-list" class="team-users-list">
+            <p class="text-dim text-sm">Loading organization members...</p>
+          </div>
+        </section>
+
+        <!-- Section 3: Storage Engine Configuration -->
+        <section class="profile-section">
+          <h4 class="metric-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+            Storage Engine Configuration
+          </h4>
+          <div class="storage-mode-toggle-group">
+            <button id="storage-mode-local-btn" type="button" class="toggle-btn active" data-storage="local">
+              <span>Local (SQLite + Qdrant)</span>
+            </button>
+            <button id="storage-mode-cloud-btn" type="button" class="toggle-btn" data-storage="cloud">
+              <span>Cloud (Supabase / Qdrant Cloud)</span>
+            </button>
+          </div>
+
+          <div id="cloud-storage-fields" class="cloud-storage-fields hidden">
+            <div class="form-group">
+              <label class="form-label" for="cloud-qdrant-url">Qdrant Cloud URL</label>
+              <input id="cloud-qdrant-url" type="text" class="form-input font-mono" placeholder="https://xyz.qdrant.tech:6333" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cloud-qdrant-key">Qdrant API Key</label>
+              <input id="cloud-qdrant-key" type="password" class="form-input font-mono" placeholder="Enter Qdrant Cloud API Key" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cloud-database-url">Managed Database URL</label>
+              <input id="cloud-database-url" type="password" class="form-input font-mono" placeholder="postgresql://user:pass@host/db" />
+            </div>
+
+            <div class="storage-action-row">
+              <button id="test-storage-btn" type="button" class="persona-btn">
+                <span>Test Connection</span>
+              </button>
+              <button id="save-storage-btn" type="button" class="primary-btn storage-save-btn">
+                <span>Save Config</span>
+              </button>
+            </div>
+            <div id="storage-test-status" class="storage-test-status hidden"></div>
+          </div>
+        </section>
+
+        <!-- Section 4: Sign Out -->
+        <section class="profile-section profile-signout-section">
+          <button id="sign-out-btn" type="button" class="signout-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+            <span>Sign Out</span>
+          </button>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========================================== -->
+  <!-- ENTERPRISE LOGIN GATE MODAL                -->
+  <!-- ========================================== -->
+  <div id="login-gate-overlay" class="login-gate-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="login-gate-backdrop"></div>
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-brand-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+        <h2 id="login-title" class="login-card-title">Enterprise Authentication</h2>
+        <p class="login-card-subtitle">Sign in to access multi-tenant knowledge intelligence</p>
+      </div>
+
+      <!-- Sign In View -->
+      <div id="login-form-view" class="login-form-view">
+        <form id="login-form" class="login-form">
+          <div class="form-group">
+            <label class="form-label" for="login-email">Email Address</label>
+            <div class="input-with-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+              <input id="login-email" type="email" class="form-input" placeholder="name@organization.org" required autocomplete="username" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label class="form-label" for="login-password">Password</label>
+              <button id="forgot-password-link" type="button" class="text-link">Forgot password?</button>
+            </div>
+            <div class="input-with-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <input id="login-password" type="password" class="form-input" placeholder="Enter password" required autocomplete="current-password" />
+              <button id="toggle-password-visibility-btn" type="button" class="password-toggle-btn" aria-label="Toggle password visibility">
+                <svg id="eye-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="login-options-row">
+            <label class="checkbox-label role-checkbox">
+              <input id="login-remember-me" type="checkbox" checked />
+              <span>Remember this device</span>
+            </label>
+          </div>
+
+          <div id="login-error-msg" class="login-msg error-msg hidden"></div>
+
+          <button id="login-submit-btn" type="submit" class="primary-btn login-btn">
+            <span>Sign In</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </button>
+        </form>
+
+        <!-- Demo Quick-Fill Ribbon -->
+        <div class="demo-quickfill-section">
+          <div class="quickfill-header">
+            <span class="quickfill-title">Demo Persona Quick-Fill</span>
+          </div>
+          <div class="demo-quickfill-grid">
+            <button type="button" class="quickfill-btn" data-quickfill="admin_default">
+              <span class="quickfill-role role-admin">Admin</span>
+              <span class="quickfill-name">Acme</span>
+            </button>
+            <button type="button" class="quickfill-btn" data-quickfill="manager_default">
+              <span class="quickfill-role role-manager">Manager</span>
+              <span class="quickfill-name">Acme</span>
+            </button>
+            <button type="button" class="quickfill-btn" data-quickfill="analyst_default">
+              <span class="quickfill-role role-analyst">Analyst</span>
+              <span class="quickfill-name">Acme</span>
+            </button>
+            <button type="button" class="quickfill-btn" data-quickfill="viewer_default">
+              <span class="quickfill-role role-viewer">Viewer</span>
+              <span class="quickfill-name">Acme</span>
+            </button>
+            <button type="button" class="quickfill-btn" data-quickfill="admin_tenant_b">
+              <span class="quickfill-role role-admin">Admin</span>
+              <span class="quickfill-name">Globex</span>
+            </button>
+            <button type="button" class="quickfill-btn" data-quickfill="viewer_tenant_b">
+              <span class="quickfill-role role-viewer">Viewer</span>
+              <span class="quickfill-name">Globex</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Forgot Password View -->
+      <div id="forgot-password-view" class="forgot-password-view hidden">
+        <div class="view-back-row">
+          <button id="back-to-login-btn" type="button" class="back-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            <span>Back to Sign In</span>
+          </button>
+        </div>
+
+        <h3 class="reset-card-title">Reset Account Password</h3>
+        <p class="reset-card-desc">Enter your account email to receive a recovery token or use master admin credentials.</p>
+
+        <div class="form-group">
+          <label class="form-label" for="reset-email">Account Email</label>
+          <div class="reset-input-row">
+            <input id="reset-email" type="email" class="form-input" placeholder="user@default.org" />
+            <button id="generate-reset-token-btn" type="button" class="persona-btn">
+              <span>Get Token</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reset-token-input">Recovery Token</label>
+          <input id="reset-token-input" type="text" class="form-input font-mono" placeholder="Paste reset token or master token" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reset-new-password">New Password</label>
+          <input id="reset-new-password" type="password" class="form-input" placeholder="Min. 6 characters" />
+        </div>
+
+        <div id="reset-status-msg" class="login-msg hidden"></div>
+
+        <button id="reset-password-submit-btn" type="button" class="primary-btn login-btn">
+          <span>Update Password</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Single script entry -->
+  <script src="script.js?v=11"></script>
+</body>
+</html>
