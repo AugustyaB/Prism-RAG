@@ -1,6 +1,6 @@
-# Changelog — ResinRAG
+# Changelog — Prism-RAG
 
-All notable changes, architectural upgrades, and milestone completions for `ResinRAG` are documented in this file.
+All notable changes, architectural upgrades, and milestone completions for `Prism-RAG` are documented in this file.
 
 ## [v3.0.0] — 2026-10-14 (Milestone v3.0 Production Platform Complete & Certified)
 

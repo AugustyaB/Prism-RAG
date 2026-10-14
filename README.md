@@ -1,4 +1,4 @@
-# ResinRAG — Enterprise Knowledge Intelligence & Agentic RAG Platform
+# Prism-RAG — Enterprise Knowledge Intelligence & Agentic RAG Platform
 
 An enterprise-grade, self-hosted, GPU-accelerated **Agentic Retrieval-Augmented Generation (RAG)** platform built with **Python, FastAPI, Qdrant Hybrid Search, SQLAlchemy, PyMuPDF, EasyOCR, and SentenceTransformers**.
 
