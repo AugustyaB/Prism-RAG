@@ -48,11 +48,26 @@ Designed to ingest massive, heterogeneous enterprise documents (technical manual
 ## Documentation Map
 
 * **Architecture & 5-Layer × 6-Section Matrix**: [FLOW.md](./FLOW.md)
+* **Local LLM Setup & Sizing Guide**: [docs/LOCAL_LLM_SETUP_GUIDE.md](./docs/LOCAL_LLM_SETUP_GUIDE.md)
 * **Architectural Decision Records (ADRs 001–010)**: [DECISIONS.md](./DECISIONS.md) / [.gsd/DECISION.md](./.gsd/DECISION.md)
 * **Project Specification**: [.gsd/SPEC.md](./.gsd/SPEC.md)
 * **Milestone Roadmap**: [.gsd/ROADMAP.md](./.gsd/ROADMAP.md)
 * **Active Phase XML Plan**: [.gsd/ACTIVE_PLAN.md](./.gsd/ACTIVE_PLAN.md)
 * **Project State & Pulse Log**: [.gsd/STATE.md](./.gsd/STATE.md) & [.gsd/PULSE.md](./.gsd/PULSE.md)
+
+---
+
+## Local LLM Setup & Sizing
+
+Project-RAG_LLM runs completely offline with **zero cloud dependencies**. It supports both **Ollama** and **LM Studio** on consumer GPUs, with automatic cloud failover:
+
+| Setup Method | Quick Command / Action | Recommended Model |
+|---|---|---|
+| **Ollama** | `ollama pull qwen2.5:7b` or `ollama pull llama3.1:8b` | `qwen2.5:7b-instruct` (~5.2GB VRAM) |
+| **LM Studio** | Load model $\to$ Start Server on port `1234` | `qwen2.5-7b-instruct-q4_k_m` |
+| **Cloud Failover** | Paste free Gemini API key into Web Studio sidebar | `gemini-2.5-flash` |
+
+> 📖 **Full Hardware & Configuration Guide:** See [docs/LOCAL_LLM_SETUP_GUIDE.md](./docs/LOCAL_LLM_SETUP_GUIDE.md) for step-by-step setup, GPU offload tuning, context sizing, and 3-tier failover mechanics.
 
 ---
 
