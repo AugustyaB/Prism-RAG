@@ -93,9 +93,15 @@ def hybrid_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         bind=test_engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
 
+    import src.auth.security as security_module
+
     monkeypatch.setattr(relational_module, "engine", test_engine)
     monkeypatch.setattr(relational_module, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(worker_module, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(server_module, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(security_module, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(security_module, "sync_benchmark_catalog", lambda *a, **kw: 0)
+    monkeypatch.setattr(worker_module, "sync_benchmark_catalog", lambda *a, **kw: 0)
 
     Base.metadata.create_all(bind=test_engine)
     with TestSessionLocal() as session:

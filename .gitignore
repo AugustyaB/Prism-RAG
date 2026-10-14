@@ -1,17 +1,13 @@
-# GSD Framework
+# GSD Framework & Agent Configs
 .gsd/
 .agent/
 .claude/
 .gemini/
 adapters/
-docs/
-scripts/
 PROJECT_RULES.md
 GSD-STYLE.md
 model_capabilities.yaml
 VERSION
-CHANGELOG.md
-LICENSE
 
 # Python
 __pycache__/

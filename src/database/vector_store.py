@@ -48,14 +48,27 @@ class VectorStore:
     Reciprocal Rank Fusion (`k=60`), and Parent Block Deduplication.
     """
 
-    def __init__(self, embedder: LocalEmbedder, collection_name: str | None = None):
-        """Initialize the Qdrant persistent client and hybrid `rag_documents_v2` collection."""
+    def __init__(
+        self,
+        embedder: LocalEmbedder,
+        collection_name: str | None = None,
+        url: str | None = None,
+        api_key: str | None = None,
+    ):
+        """Initialize the Qdrant client (local directory or remote Qdrant Cloud) and hybrid collection."""
         self.embedder = embedder
         self.sparse_encoder = SparseBM25Encoder()
         self.collection_name = collection_name or settings.qdrant_collection_v2
 
-        logger.info("Connecting to Qdrant at {}", settings.vector_db_dir)
-        self.client = QdrantClient(path=str(settings.vector_db_dir))
+        target_url = url or (settings.cloud_qdrant_url if settings.storage_mode == "cloud" else None)
+        target_api_key = api_key or (settings.cloud_qdrant_api_key if settings.storage_mode == "cloud" else None)
+
+        if target_url:
+            logger.info("Connecting to remote Qdrant Cloud at {}", target_url)
+            self.client = QdrantClient(url=target_url, api_key=target_api_key, timeout=10)
+        else:
+            logger.info("Connecting to local Qdrant at {}", settings.vector_db_dir)
+            self.client = QdrantClient(path=str(settings.vector_db_dir))
 
         test_emb = self.embedder.embed_text("test")
         dim = len(test_emb) if test_emb else 384

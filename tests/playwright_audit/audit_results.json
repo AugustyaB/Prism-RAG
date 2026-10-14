@@ -1,0 +1,174 @@
+{
+  "console_logs": [],
+  "page_errors": [],
+  "network_errors": [],
+  "features_tested": {
+    "persona_switching_and_rbac": [
+      {
+        "persona_id": "admin_default",
+        "label": "Admin (Default)",
+        "displayed_email": "admin@default.org",
+        "displayed_role": "ADMIN",
+        "displayed_org": "default_org",
+        "upload_disabled": false,
+        "delete_buttons_count": 3
+      },
+      {
+        "persona_id": "manager_default",
+        "label": "Manager (Default)",
+        "displayed_email": "manager@default.org",
+        "displayed_role": "MANAGER",
+        "displayed_org": "default_org",
+        "upload_disabled": false,
+        "delete_buttons_count": 0
+      },
+      {
+        "persona_id": "analyst_default",
+        "label": "Analyst (Default)",
+        "displayed_email": "analyst@default.org",
+        "displayed_role": "ANALYST",
+        "displayed_org": "default_org",
+        "upload_disabled": true,
+        "delete_buttons_count": 0
+      },
+      {
+        "persona_id": "viewer_default",
+        "label": "Viewer (Default)",
+        "displayed_email": "viewer@default.org",
+        "displayed_role": "VIEWER",
+        "displayed_org": "default_org",
+        "upload_disabled": true,
+        "delete_buttons_count": 0
+      },
+      {
+        "persona_id": "admin_tenant_b",
+        "label": "Admin (Tenant B)",
+        "displayed_email": "admin@tenant_b.org",
+        "displayed_role": "ADMIN",
+        "displayed_org": "tenant_b",
+        "upload_disabled": false,
+        "delete_buttons_count": 0
+      },
+      {
+        "persona_id": "viewer_tenant_b",
+        "label": "Viewer (Tenant B)",
+        "displayed_email": "viewer@tenant_b.org",
+        "displayed_role": "VIEWER",
+        "displayed_org": "tenant_b",
+        "upload_disabled": true,
+        "delete_buttons_count": 0
+      }
+    ],
+    "document_catalog": {
+      "rendered_count": 3,
+      "documents": [
+        "tech_manual.pdf",
+        "scanned_operations_log.pdf",
+        "compliance_policy.pdf"
+      ]
+    },
+    "gemini_api_key_ui": {
+      "initial_status": "SERVER CONFIG",
+      "after_save_status": "ACTIVE"
+    },
+    "citations_and_tooltips": {
+      "citation_chips_count": 1,
+      "tooltips_analyzed": [
+        {
+          "chip_index": 0,
+          "chip_text": "[1] compliance_policy.pdf",
+          "tooltip_box": {
+            "x": 356,
+            "y": 233.859375,
+            "width": 302.96875,
+            "height": 101.6875
+          },
+          "is_clipped_top": false,
+          "is_clipped_left": false,
+          "is_clipped_right": false
+        }
+      ]
+    },
+    "telemetry_ribbon": "Total: 6050.7ms\nEmbed: 17.1ms | Search: 4.1ms | Rerank: 5777.0ms | LLM: 251.6ms\n332p / 80c\n$0.000000\nhybrid_rerank",
+    "abstention_banner": {
+      "banner_count": 1,
+      "last_banner_text": "Two-Tier Abstention Gate [LOW_SCORE] (Top Rerank Score: 0.002)\nI cannot answer this based on the provided documents.\nTotal: 5558.0ms\nEmbed: 14.5ms | Search: 3.6ms | Rerank: 5539.5ms | LLM: 0.0ms\n0p / 0c\n$0.000000\nhybrid_rerank"
+    },
+    "observability_drawer": {
+      "drawer_opened": true,
+      "metric_values": [
+        "6167.3ms",
+        "11156.1ms",
+        "11817.0ms",
+        "7380.9ms",
+        "15.7ms",
+        "27.0ms",
+        "28.6ms",
+        "16.4ms",
+        "3.7ms",
+        "4.4ms",
+        "4.6ms",
+        "3.7ms",
+        "5664.0ms",
+        "7215.4ms",
+        "7701.8ms",
+        "5297.9ms",
+        "2154.8ms",
+        "4090.7ms",
+        "4092.0ms",
+        "2062.2ms"
+      ]
+    }
+  },
+  "visual_oddities": [],
+  "responsive_checks": {
+    "desktop_1440x900": {
+      "viewport": "1440x900",
+      "scroll_width": 1440,
+      "client_width": 1440,
+      "has_horizontal_page_overflow": false,
+      "persona_switcher_bounds": {
+        "x": 318.984375,
+        "y": 12,
+        "width": 707.21875,
+        "height": 28
+      }
+    },
+    "laptop_1280x800": {
+      "viewport": "1280x800",
+      "scroll_width": 1280,
+      "client_width": 1280,
+      "has_horizontal_page_overflow": false,
+      "persona_switcher_bounds": {
+        "x": 318.984375,
+        "y": 12,
+        "width": 547.21875,
+        "height": 28
+      }
+    },
+    "tablet_768x1024": {
+      "viewport": "768x1024",
+      "scroll_width": 768,
+      "client_width": 768,
+      "has_horizontal_page_overflow": false,
+      "persona_switcher_bounds": {
+        "x": 44,
+        "y": 59,
+        "width": 680,
+        "height": 28
+      }
+    },
+    "mobile_375x812": {
+      "viewport": "375x812",
+      "scroll_width": 375,
+      "client_width": 375,
+      "has_horizontal_page_overflow": false,
+      "persona_switcher_bounds": {
+        "x": 40,
+        "y": 77,
+        "width": 295,
+        "height": 28
+      }
+    }
+  }
+}

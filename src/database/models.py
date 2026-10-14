@@ -119,6 +119,7 @@ class IngestionJob(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     current_stage: Mapped[str] = mapped_column(String(32), nullable=False, default="QUEUED")
+    queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     total_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processed_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunks_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -140,6 +141,7 @@ class IngestionJob(Base):
             "org_id": self.org_id,
             "status": self.status,
             "current_stage": self.current_stage,
+            "queue_position": self.queue_position,
             "total_pages": self.total_pages,
             "processed_pages": self.processed_pages,
             "chunks_created": self.chunks_created,
@@ -200,5 +202,66 @@ class QueryTelemetry(Base):
             "completion_tokens": self.completion_tokens,
             "estimated_cost_usd": self.estimated_cost_usd,
             "cited_doc_ids": self.cited_doc_ids,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ChatSession(Base):
+    """Multi-turn conversational session entity (L1)."""
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id"), nullable=False, index=True
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("organizations.id"), nullable=False, default="default_org", index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="New Conversation")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "session_id": self.id,
+            "user_id": self.user_id,
+            "org_id": self.org_id,
+            "title": self.title,
+            "summary": self.summary,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ChatMessage(Base):
+    """Individual message within a multi-turn conversational session (L1)."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    session_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("chat_sessions.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)  # "user", "assistant", "tool"
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    citations: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "role": self.role,
+            "content": self.content,
+            "citations": self.citations if self.citations is not None else [],
+            "token_count": self.token_count,
+            "latency_ms": self.latency_ms,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

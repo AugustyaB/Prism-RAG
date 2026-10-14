@@ -14,8 +14,12 @@ from src.database.models import Base, Organization
 
 
 def _build_engine():
-    """Construct the SQLAlchemy engine with SQLite multi-thread compatibility."""
-    db_url = settings.database_url
+    """Construct the SQLAlchemy engine with SQLite multi-thread or remote PostgreSQL compatibility."""
+    db_url = (
+        settings.cloud_database_url
+        if (settings.storage_mode == "cloud" and settings.cloud_database_url)
+        else settings.database_url
+    )
     if db_url.startswith("sqlite:///"):
         rel_path = db_url.replace("sqlite:///", "", 1)
         db_file = Path(rel_path)
@@ -36,6 +40,15 @@ def init_db() -> None:
     """Create all relational tables and seed the default organization if absent."""
     settings.ensure_dirs()
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        try:
+            from sqlalchemy import text
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(ingestion_jobs)")).fetchall()]
+            if columns and "queue_position" not in columns:
+                conn.execute(text("ALTER TABLE ingestion_jobs ADD COLUMN queue_position INTEGER"))
+                conn.commit()
+        except Exception:
+            pass
     with SessionLocal() as session:
         default_org = session.get(Organization, "default_org")
         if default_org is None:

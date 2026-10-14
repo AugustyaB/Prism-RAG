@@ -1,38 +1,47 @@
-# Project-RAG_LLM — Enterprise Knowledge Intelligence & RAG Platform
+# Project-RAG_LLM — Enterprise Knowledge Intelligence & Agentic RAG Platform
 
-An enterprise-grade, self-hosted, GPU-accelerated **Retrieval-Augmented Generation (RAG)** platform built with **Python, FastAPI, Qdrant, SQLAlchemy, PyMuPDF, EasyOCR, and SentenceTransformers**.
+An enterprise-grade, self-hosted, GPU-accelerated **Agentic Retrieval-Augmented Generation (RAG)** platform built with **Python, FastAPI, Qdrant Hybrid Search, SQLAlchemy, PyMuPDF, EasyOCR, and SentenceTransformers**.
 
-Designed to ingest massive, heterogeneous PDFs (1,000+ page technical manuals, enterprise policy docs, and scanned layouts), index them with **Dense + Sparse BM25 Hybrid Search & Cross-Encoder Reranking**, enforce **Multi-Tenant JWT Authentication & Pre-Retrieval RBAC**, track **Stage-Level Latency & Token/Cost Telemetry**, and verify retrieval/generation quality via an **Automated 100-Question Evaluation Benchmark**.
+Designed to ingest massive, heterogeneous enterprise documents (technical manuals, financial reports, compliance standards, and scanned forms), index them with **Parent-Child Chunking, Dense + Sparse BM25 Hybrid Search & Cross-Encoder Reranking**, operate a **Pure-Python Agentic State Machine (Multi-Query RRF, CRAG Self-Reflection & Tool Dispatcher)**, manage **Persistent Conversational Sessions**, enforce **Multi-Tenant JWT Authentication & Pre-Retrieval RBAC**, and provide an interactive **Multi-Turn Web Studio UI** adhering strictly to the **Titanium Obsidian & Emerald** design system.
 
 ---
 
 ## Core Architecture & Features
 
-### 1. Adaptive PDF Ingestion & GPU OCR (`Sec 5`)
+### 1. Native Agentic Intelligence & Tool Dispatcher (`v3.0`, `Sec 1, Sec 2, Sec 6`)
+* **Pure-Python FSM State Machine (`src/agents/state_machine.py`)**: Finite state execution loop (`Load Memory` $\to$ `Decompose` $\to$ `Retrieve` $\to$ `Grade` $\to$ `Tool` $\to$ `Synthesize`) operating without heavy third-party framework overhead (LangChain/LangGraph-free).
+* **Conversational Session Memory (`src/agents/memory.py`)**: Persistent SQLite/SQLAlchemy `ChatSession` and `ChatMessage` models with a 3-turn sliding window and rolling background summarization for coherent multi-turn context.
+* **Multi-Query Decomposition & Expansion (`src/retrieval/multi_query.py`)**: Fast heuristic sub-query expansion producing 3 distinct retrieval angles merged via native Qdrant Reciprocal Rank Fusion ($k=60$).
+* **Corrective RAG (CRAG) & Self-Reflection (`src/retrieval/crag.py`)**: Evaluates retrieved passage confidence (`HIGH`, `MEDIUM`, `LOW`) with a strictly bounded 1-retry query reformulation loop, preventing hallucinations and infinite loops.
+* **Curated 4-Tool Dispatcher (`src/agents/tools.py`)**: First-principles tool execution providing:
+  * `document_search`: Targeted hybrid vector + BM25 keyword search.
+  * `document_summary`: Comprehensive multi-chunk executive summarizer.
+  * `deterministic_calculator`: Safe AST arithmetic evaluation engine (zero `eval`/`exec`).
+  * `document_comparison`: Side-by-side comparative synthesis across documents.
+
+### 2. Multi-Turn Conversational Web Studio (`v3.0`, `Sec 6`)
+* **Titanium Obsidian & Emerald Design**: Built with a strict visual contract—strictly 0% blue/purple colors and 0% emojis (100% inline SVG vectors).
+* **Multi-Turn Thread & Reasoning Trace Accordion**: Full interactive chat stream rendering user and assistant Obsidian/Emerald cards with live typing effect and an expandable `#reasoning-trace` disclosure exposing query decomposition angles, confidence grades, tool execution chips, and citations.
+* **Session Switcher & Profile Drawer**: 1-click "New Session" creation, session history dropdown, and top-right authenticated user profile avatar with sliding RBAC clearances drawer.
+
+### 3. Adaptive PDF Ingestion & Concurrency Queue (`Sec 4, Sec 5`)
 * **Streaming SHA-256 Fingerprinting (`PdfParser`)**: Hashes files in 8KB chunks for instant deduplication and idempotent `UUIDv5` Qdrant indexing.
-* **3-Way Page Classifier (`PageClassifier`)**: Routes each page based on extractable text (`text_threshold = 50` chars) and embedded object counts:
-  * `PageType.TEXT`: Direct C-level PyMuPDF extraction (~1ms/page, zero GPU usage).
-  * `PageType.IMAGE`: Full-page 200 DPI rasterization + GPU-accelerated **EasyOCR** with a recursive **50MB pixmap halving guard** and per-page timeout.
-  * `PageType.MIXED`: Retains native digital text and surgically OCRs embedded XREF images (filtering out decorative icons `<50x50px`).
-* **Asynchronous Background Ingestion (`v2.1`)**: Non-blocking `202 Accepted` uploads backed by SQLAlchemy (`data/metadata.db`) and a background worker pool tracking `PENDING` $\to$ `PROCESSING` $\to$ `COMPLETED` / `FAILED`.
+* **3-Way Page Classifier (`PageClassifier`)**: Routes pages based on extractable text and embedded object counts (`PageType.TEXT` via C-level PyMuPDF, `PageType.IMAGE` via GPU-accelerated EasyOCR with 50MB pixmap guard, and `PageType.MIXED` with surgical XREF OCR).
+* **Sequential Concurrency Queue (`IngestionJobManager`)**: Non-blocking `202 Accepted` background upload queue with strict `Concurrency = 1` preventing GPU CUDA out-of-memory thrashing.
+* **Auto-Ingest Folder Watcher (`AutoIngestWatcher`)**: Background daemon monitoring `data/auto_ingest/` for automated directory ingestion.
 
-### 2. Hybrid Search, RRF & Cross-Encoder Reranking (`Sec 1`)
-* **Cross-Page Parent-Child Chunking (`SemanticChunker`)**: Splits documents across paragraph and sentence boundaries with word-safe rolling overlap, indexing sharp child chunks (`~300 chars`) linked to cross-page parent contexts (`~1200 chars`).
-* **Two-Stage Hybrid Retrieval (`VectorStore` & `LocalEmbedder`)**:
-  * **Stage 1 (Candidate Recall)**: Combines dense semantic vectors (`BAAI/bge-small-en-v1.5`, 384-d Cosine with BGE query prefix) and sparse lexical BM25 vectors (`SparseVectorParams(modifier=IDF)`) via **Reciprocal Rank Fusion ($\text{RRF}, k=60$)**.
-  * **Stage 2 (Precision Reranking)**: Scores candidate passages jointly with the query using **`BAAI/bge-reranker-v2-m3`** (`CrossEncoder` on CUDA).
-* **Two-Tier Abstention Gate**: Short-circuits before calling the LLM when reranker confidence falls below `min_rerank_score` (saving latency and token cost), backed by strict grounded prompt instructions.
+### 4. Hybrid Search, RRF & Cross-Encoder Reranking (`Sec 1`)
+* **Cross-Page Parent-Child Chunking (`SemanticChunker`)**: Indexes granular child chunks (`~300 chars`) linked to broad cross-page parent contexts (`~1200 chars`).
+* **Two-Stage Hybrid Retrieval (`VectorStore` & `Retriever`)**:
+  * **Stage 1 (Recall)**: Dense BGE embeddings (`BAAI/bge-small-en-v1.5`, 384-d Cosine) and sparse BM25 IDF vectors fused via **Reciprocal Rank Fusion ($\text{RRF}, k=60$)**.
+  * **Stage 2 (Precision)**: Deep cross-encoding via **`BAAI/bge-reranker-v2-m3`** on CUDA.
+* **Two-Tier Abstention Gate**: Short-circuits when reranker confidence falls below threshold, saving latency and token costs.
 
-### 3. Multi-Provider LLM Generation (`Sec 1, Sec 6`)
-* Pluggable `BaseGenerator` strategy supporting:
-  * **LM Studio (`LMStudioGenerator`)**: Local OpenAI-compatible inference (`gpt-oss-20b`).
-  * **Ollama (`OllamaGenerator`)**: Local inference (`llama3`).
-  * **Google Gemini (`GeminiGenerator`)**: Cloud fallback (`gemini-2.5-flash`).
-
-### 4. Automated Evaluation, Multi-Tenant RBAC & Observability (`Sec 2, Sec 3, Sec 4`)
-* **Automated 100-Question Evaluation Suite (`v2.3`)**: Benchmarks `vector_only`, `bm25_only`, `hybrid_rrf`, and `hybrid_rerank` across **Recall@K, MRR, Answer Faithfulness, Citation Accuracy, and Abstention Quality**.
-* **Multi-Tenant JWT Auth & Pre-Retrieval RBAC (`v2.4`)**: Enforces `Organization`, `Role` (`ADMIN`, `MANAGER`, `ANALYST`, `VIEWER`), and `Visibility` (`PUBLIC`, `ORG`, `RESTRICTED`) filters directly inside Qdrant before retrieved text reaches the LLM.
-* **Observability & Cost Tracking (`v2.5`)**: Tracks `X-Request-ID`, per-stage latency spans (`embed`, `search`, `rerank`, `llm`), p50/p95 latencies, token usage, and estimated USD cost.
+### 5. Multi-Tenant RBAC, Enterprise Identity & Observability (`Sec 2, Sec 3, Sec 4`)
+* **Enterprise Login Gate & Dual-Mode Password Recovery (`v2.9`)**: Email/password authentication, 1-click demo persona switcher, and secure SMTP / Admin-token password reset.
+* **Pre-Retrieval Document RBAC**: Enforces Organization, Role (`ADMIN`, `MANAGER`, `ANALYST`, `VIEWER`), and Visibility (`PUBLIC`, `ORG`, `RESTRICTED`) filters inside Qdrant before vector search.
+* **Observability & Cost Telemetry**: Tracks `X-Request-ID`, stage latencies (`embed`, `search`, `rerank`, `llm`), p50/p95 metrics, token usage, and USD accounting.
+* **Automated 100-Question Evaluation Suite**: Comprehensive benchmark evaluating Recall@K, MRR, Answer Faithfulness, and Citation Accuracy.
 
 ---
 

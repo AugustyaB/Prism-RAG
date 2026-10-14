@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Tuple
 
 from loguru import logger
@@ -9,14 +10,32 @@ from loguru import logger
 from src.auth.dependencies import build_qdrant_rbac_filter
 from src.config import settings
 from src.database.vector_store import VectorStore, combine_filters
+from src.retrieval.crag import CRAGGrader
+from src.retrieval.multi_query import MultiQueryDecomposer
+
+
+def _clean_text_artifacts(text: str) -> str:
+    """Sanitize Unicode replacement characters and extraction artifacts."""
+    if not text:
+        return ""
+    text = text.replace("\ufffd", " ")
+    text = re.sub(r"(?<=\n)\?\s+(?=[A-Z0-9])", "• ", text)
+    return re.sub(r"[ \t]+", " ", text).strip()
 
 
 class Retriever:
-    """Manages multi-mode context retrieval and enforces the Pre-LLM Abstention Gate."""
+    """Manages multi-mode context retrieval, multi-query RRF decomposition, and CRAG self-reflection."""
 
-    def __init__(self, vector_store: VectorStore):
-        """Initialize Retriever with a VectorStore instance."""
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        decomposer: MultiQueryDecomposer | None = None,
+        crag_grader: CRAGGrader | None = None,
+    ) -> None:
+        """Initialize Retriever with a VectorStore instance and optional decomposer/grader."""
         self.vector_store = vector_store
+        self.decomposer = decomposer or MultiQueryDecomposer(vector_store)
+        self.crag_grader = crag_grader or CRAGGrader()
         self.last_retrieval_meta: dict[str, Any] = {}
 
     def retrieve(
@@ -28,8 +47,10 @@ class Retriever:
         query_filter: Any = None,
         user: Any = None,
         collector: Any = None,
+        enable_multi_query: bool = False,
+        enable_crag: bool = True,
     ) -> dict[str, Any]:
-        """Execute hybrid retrieval, enforce Tier-1 Pre-LLM Abstention, and format Parent context blocks."""
+        """Execute hybrid retrieval, multi-query RRF expansion, and CRAG self-reflection."""
         logger.info("Retrieving context for query: '{}' (mode={})", query, mode)
 
         active_filter = query_filter
@@ -37,14 +58,28 @@ class Retriever:
             rbac_filter = build_qdrant_rbac_filter(user)
             active_filter = combine_filters(query_filter, rbac_filter)
 
-        results = self.vector_store.search(
-            query,
-            initial_k=initial_k,
-            final_k=final_k,
-            mode=mode,
-            query_filter=active_filter,
-            collector=collector,
-        )
+        multi_query_meta: dict[str, Any] = {"decomposed": False}
+
+        # 1. Multi-Query Expansion & Parallel RRF Retrieval (if requested)
+        if (enable_multi_query or mode == "multi_query") and self.decomposer.should_decompose(query):
+            results, multi_query_meta = self.decomposer.search_and_merge(
+                query=query,
+                initial_k=initial_k,
+                final_k=final_k,
+                mode="hybrid_rerank" if mode == "multi_query" else mode,
+                query_filter=active_filter,
+                collector=collector,
+            )
+        else:
+            effective_mode = "hybrid_rerank" if mode == "multi_query" else mode
+            results = self.vector_store.search(
+                query,
+                initial_k=initial_k,
+                final_k=final_k,
+                mode=effective_mode,
+                query_filter=active_filter,
+                collector=collector,
+            )
 
         # Tier 1a: Empty Retrieval Abstention
         if not results:
@@ -61,14 +96,55 @@ class Retriever:
                 "abstention_reason": reason,
                 "top_score": None,
                 "mode": mode,
+                "multi_query": multi_query_meta,
+                "crag": {"grade": "low", "action": "abstain", "reason": reason},
             }
             self.last_retrieval_meta = outcome
             return outcome
 
         top_score = float(results[0].get("score", 0.0))
 
-        # Tier 1b: Pre-LLM Cross-Encoder Rerank Score Threshold Gate
-        if mode == "hybrid_rerank" and top_score < settings.min_rerank_score:
+        # Tier 1b: CRAG Self-Reflection & 1-shot Query Reformulation
+        crag_decision: dict[str, Any] = {
+            "grade": "high",
+            "action": "proceed",
+            "reason": "HIGH_CONFIDENCE",
+            "confidence": top_score,
+            "loop_count": 0,
+        }
+        if enable_crag and mode in {"hybrid_rerank", "multi_query"}:
+            crag_decision = self.crag_grader.grade(top_score, results, loop_count=0)
+            if crag_decision["action"] == "reformulate":
+                logger.info(
+                    "CRAG triggered 1-shot query reformulation (top_score={:.3f})", top_score
+                )
+                reformulated_q = self.crag_grader.reformulate_query(query, results)
+                crag_decision["reformulated_query"] = reformulated_q
+
+                # Retry retrieval once with reformulated query
+                retry_results = self.vector_store.search(
+                    reformulated_q,
+                    initial_k=initial_k,
+                    final_k=final_k,
+                    mode="hybrid_rerank",
+                    query_filter=active_filter,
+                    collector=collector,
+                )
+                if retry_results:
+                    retry_top_score = float(retry_results[0].get("score", 0.0))
+                    retry_decision = self.crag_grader.grade(
+                        retry_top_score, retry_results, loop_count=1
+                    )
+                    retry_decision["reformulated_query"] = reformulated_q
+                    crag_decision = retry_decision
+                    if retry_top_score > top_score:
+                        results = retry_results
+                        top_score = retry_top_score
+
+        # Pre-LLM Cross-Encoder Rerank Score Threshold Gate
+        if mode in {"hybrid_rerank", "multi_query"} and (
+            top_score < settings.min_rerank_score or crag_decision.get("action") == "abstain"
+        ):
             logger.warning(
                 "Tier-1 Abstention (LOW_SCORE): top_score={:.3f} < min_rerank_score={:.3f}",
                 top_score,
@@ -81,9 +157,25 @@ class Retriever:
                 "abstention_reason": "LOW_SCORE",
                 "top_score": top_score,
                 "mode": mode,
+                "multi_query": multi_query_meta,
+                "crag": crag_decision,
             }
             self.last_retrieval_meta = outcome
             return outcome
+
+        # In hybrid_rerank mode, retain top-ranked positive relevance chunks (score >= 0.0)
+        # while pruning completely irrelevant negative-logit noise
+        if mode in {"hybrid_rerank", "multi_query"} and top_score >= settings.min_rerank_score:
+            filtered_results = [
+                hit for idx, hit in enumerate(results) if idx < 2 or float(hit.get("score", 0.0)) >= 0.0
+            ]
+            if len(filtered_results) < len(results):
+                logger.info(
+                    "Filtered {} negative noise chunks (< 0.0); retained {} high-confidence chunks.",
+                    len(results) - len(filtered_results),
+                    len(filtered_results),
+                )
+                results = filtered_results
 
         context_blocks: list[str] = []
         for hit in results:
@@ -96,17 +188,22 @@ class Retriever:
                 if page_end is not None and page_end != page_start
                 else f"{page_start}"
             )
-            block_text = (
-                hit.get("parent_text")
-                or meta.get("parent_text")
-                or hit.get("text", "")
-            ).strip()
+            raw_block = (
+                hit.get("parent_text") or meta.get("parent_text") or hit.get("text", "")
+            )
+            block_text = _clean_text_artifacts(raw_block)
+            if "text" in hit and isinstance(hit["text"], str):
+                hit["text"] = _clean_text_artifacts(hit["text"])
+            if "parent_text" in hit and isinstance(hit["parent_text"], str):
+                hit["parent_text"] = _clean_text_artifacts(hit["parent_text"])
 
             block = f"--- Document: {source} (Page: {page_label}) ---\n{block_text}"
             context_blocks.append(block)
 
         formatted_context = "\n\n".join(context_blocks)
-        logger.info("Assembled {} parent context blocks (top_score={:.3f}).", len(context_blocks), top_score)
+        logger.info(
+            "Assembled {} parent context blocks (top_score={:.3f}).", len(context_blocks), top_score
+        )
 
         outcome = {
             "context": formatted_context,
@@ -115,6 +212,8 @@ class Retriever:
             "abstention_reason": None,
             "top_score": top_score,
             "mode": mode,
+            "multi_query": multi_query_meta,
+            "crag": crag_decision,
         }
         self.last_retrieval_meta = outcome
         return outcome

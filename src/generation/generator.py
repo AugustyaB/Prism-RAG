@@ -61,7 +61,7 @@ class OllamaGenerator(BaseGenerator):
         logger.info(f"Querying Ollama API at {endpoint} with model {settings.ollama_model}")
         
         try:
-            response = requests.post(endpoint, json=payload, timeout=120)
+            response = requests.post(endpoint, json=payload, timeout=(0.12, 120))
             response.raise_for_status()
             result = response.json()
             return result.get("response", "")
@@ -95,7 +95,7 @@ class LMStudioGenerator(BaseGenerator):
         logger.info(f"Querying LM Studio at {endpoint} with model {settings.lmstudio_model}")
         
         try:
-            response = requests.post(endpoint, json=payload, timeout=180)
+            response = requests.post(endpoint, json=payload, timeout=(0.12, 180))
             response.raise_for_status()
             result = response.json()
             return result["choices"][0]["message"]["content"]
@@ -116,14 +116,17 @@ class LMStudioGenerator(BaseGenerator):
 class GeminiGenerator(BaseGenerator):
     """Cloud LLM interaction utilizing Google GenAI API."""
     
-    def __init__(self):
+    def __init__(self, api_key: str | None = None):
         super().__init__()
         from google import genai
         
-        if not settings.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is missing for Gemini Provider.")
+        effective_key = api_key or settings.gemini_api_key
+        if not effective_key:
+            raise ValueError("GEMINI_API_KEY is missing for Gemini Provider.")
             
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.api_key = effective_key
+        self.client = genai.Client(api_key=effective_key)
+        self.model_name = settings.gemini_model
         
     def generate(self, query: str, context: str) -> str:
         prompt = self._build_prompt(query, context)
@@ -140,11 +143,46 @@ class GeminiGenerator(BaseGenerator):
             return f"Error querying Gemini API: {e}"
 
 
-def get_generator(provider: str | None = None) -> BaseGenerator:
+def synthesize_extractive_answer(query: str, context: str) -> str:
+    """Synthesize a grounded extractive answer directly from retrieved parent context when local LLM is offline."""
+    if not context or not context.strip():
+        return "I cannot answer this based on the provided documents. No matching context available."
+
+    blocks = [b.strip() for b in context.split("--- Document: ") if b.strip()]
+    if not blocks:
+        return "I cannot answer this based on the provided documents."
+
+    summaries = []
+    for b in blocks[:3]:
+        lines = b.splitlines()
+        header = lines[0].rstrip("-").strip() if lines else "Document Excerpt"
+        if not header:
+            header = "Document Excerpt"
+        content_lines = [l.strip() for l in lines[1:] if l.strip() and not l.startswith("---")]
+        if content_lines:
+            snippet = " ".join(content_lines[:4])
+            if len(snippet) > 360:
+                snippet = snippet[:357] + "..."
+            summaries.append(f"**From {header}:**\n> {snippet}")
+        elif lines:
+            snippet = lines[0].rstrip("-").strip()
+            if len(snippet) > 360:
+                snippet = snippet[:357] + "..."
+            summaries.append(f"> {snippet}")
+
+    if not summaries and context.strip():
+        snippet = context.strip()[:360]
+        summaries.append(f"> {snippet}")
+
+    return "\n\n".join(summaries)
+
+
+def get_generator(provider: str | None = None, api_key: str | None = None) -> BaseGenerator:
     """Factory method to instantiate the correct generator.
     
     Args:
         provider: 'lmstudio', 'ollama', or 'gemini'. Defaults to settings.llm_provider.
+        api_key: Optional runtime API key for cloud providers (e.g., Gemini).
     """
     provider = provider or settings.llm_provider
     provider = provider.lower()
@@ -152,9 +190,10 @@ def get_generator(provider: str | None = None) -> BaseGenerator:
     if provider == "lmstudio":
         return LMStudioGenerator()
     elif provider == "gemini":
-        return GeminiGenerator()
+        return GeminiGenerator(api_key=api_key)
     elif provider == "ollama":
         return OllamaGenerator()
     else:
         logger.warning(f"Unknown provider '{provider}', falling back to LM Studio.")
         return LMStudioGenerator()
+

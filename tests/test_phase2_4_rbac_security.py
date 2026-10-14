@@ -44,11 +44,68 @@ from src.retrieval.retriever import Retriever
 
 
 @pytest.fixture(scope="module", autouse=True)
-def setup_test_environment():
-    """Ensure relational database and demo accounts are initialized."""
-    init_db()
-    seed_demo_accounts()
+def setup_test_environment(tmp_path_factory):
+    """Ensure relational database and demo accounts are initialized in an isolated temporary DB."""
+    test_db_dir = tmp_path_factory.mktemp("rbac_test_db")
+    test_db_path = test_db_dir / "test_metadata.db"
+    test_db_url = f"sqlite:///{test_db_path}"
+
+    import src.database.relational as rel
+    import src.api.server as srv
+    import src.auth.security as sec
+    import src.jobs.ingestion_worker as ing
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from src.config import settings
+
+    orig_url = settings.database_url
+    orig_upload_dir = settings.pdf_upload_dir
+    orig_engine = rel.engine
+    orig_session = rel.SessionLocal
+
+    test_upload_dir = test_db_dir / "uploads"
+    test_upload_dir.mkdir(parents=True, exist_ok=True)
+    settings.database_url = test_db_url
+    settings.pdf_upload_dir = test_upload_dir
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    test_session_maker = sessionmaker(
+        bind=test_engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
+
+    rel.engine = test_engine
+    rel.SessionLocal = test_session_maker
+    srv.SessionLocal = test_session_maker
+    srv.db_session_factory = test_session_maker
+    sec.SessionLocal = test_session_maker
+    ing.SessionLocal = test_session_maker
+    globals()["SessionLocal"] = test_session_maker
+
+    rel.init_db()
+    sec.seed_demo_accounts()
+
+    from src.database.relational import get_db
+
+    def override_get_db():
+        db = test_session_maker()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    srv.app.dependency_overrides[get_db] = override_get_db
+
     yield
+
+    srv.app.dependency_overrides.pop(get_db, None)
+    settings.database_url = orig_url
+    settings.pdf_upload_dir = orig_upload_dir
+    rel.engine = orig_engine
+    rel.SessionLocal = orig_session
+    srv.SessionLocal = orig_session
+    srv.db_session_factory = orig_session
+    sec.SessionLocal = orig_session
+    ing.SessionLocal = orig_session
+    globals()["SessionLocal"] = orig_session
 
 
 @pytest.fixture

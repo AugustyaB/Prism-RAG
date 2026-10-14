@@ -130,16 +130,26 @@ class Settings(BaseSettings):
 
     # --- Async Ingestion Worker & Retrieval Safety ---
     max_ingestion_workers: int = Field(
-        default=2,
-        description="Bounded thread pool size for background PDF ingestion jobs",
+        default=1,
+        description="Bounded thread pool size for background PDF ingestion jobs (sequential GPU safety)",
     )
     max_job_retries: int = Field(
         default=2,
         description="Maximum automatic retry attempts on transient ingestion failure",
     )
     min_rerank_score: float = Field(
-        default=0.15,
+        default=0.08,
         description="Minimum Cross-Encoder reranker score before pre-LLM abstention",
+    )
+
+    # --- Auto-Ingestion & Watcher Daemon ---
+    auto_ingest_dir: Path = Field(
+        default=Path("./data/auto_ingest"),
+        description="Directory watched for automatic background document ingestion",
+    )
+    auto_ingest_interval_seconds: int = Field(
+        default=5,
+        description="Interval in seconds for auto-ingest folder scanner daemon",
     )
 
     # --- Authentication & Multi-Tenant RBAC Security ---
@@ -159,6 +169,28 @@ class Settings(BaseSettings):
         default=True,
         description="Enforce JWT authentication and tenant filtering",
     )
+    admin_master_reset_token: str = Field(
+        default="ADMIN-MASTER-RESET-TOKEN-2026",
+        description="Master token for offline self-hosted password reset demo fallback",
+    )
+
+    # --- Cloud Storage & Managed Persistence ---
+    storage_mode: str = Field(
+        default="local",
+        description="Active storage mode: 'local' (embedded SQLite + Qdrant) or 'cloud' (Supabase/Postgres + Qdrant Cloud)",
+    )
+    cloud_qdrant_url: str | None = Field(
+        default=None,
+        description="Qdrant Cloud cluster endpoint URL (e.g. https://xxxx.cloud.qdrant.io:6333)",
+    )
+    cloud_qdrant_api_key: str | None = Field(
+        default=None,
+        description="API key for authenticated Qdrant Cloud cluster",
+    )
+    cloud_database_url: str | None = Field(
+        default=None,
+        description="Remote PostgreSQL / Supabase connection URL (e.g. postgresql+psycopg2://...)",
+    )
 
     # --- Observability, Telemetry & Rate Limiting ---
     telemetry_enabled: bool = Field(
@@ -170,7 +202,7 @@ class Settings(BaseSettings):
         description="Enable request rate limiting",
     )
     rate_limit_requests_per_minute: int = Field(
-        default=60,
+        default=180,
         description="Max allowed requests per minute per IP/user",
     )
     model_pricing_catalog: dict[str, dict[str, float]] = Field(
@@ -242,6 +274,7 @@ class Settings(BaseSettings):
         self.eval_benchmark_dir.mkdir(parents=True, exist_ok=True)
         self.eval_dataset_path.parent.mkdir(parents=True, exist_ok=True)
         self.eval_results_dir.mkdir(parents=True, exist_ok=True)
+        self.auto_ingest_dir.mkdir(parents=True, exist_ok=True)
         Path("./data/raw").mkdir(parents=True, exist_ok=True)
 
 

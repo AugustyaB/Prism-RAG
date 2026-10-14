@@ -4,21 +4,40 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import get_current_user, require_role
 from src.auth.security import (
+    RBAC_ROLES,
     create_access_token,
+    generate_password_reset_token,
     hash_password,
     seed_demo_accounts,
     verify_password,
+    verify_password_reset_token,
 )
+from src.config import settings
 from src.database.models import Organization, User
 from src.database.relational import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & RBAC"])
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., description="Account email address to request password reset for")
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(..., description="Account email address")
+    reset_token: str = Field(..., description="Time-limited reset token or admin master token")
+    new_password: str = Field(..., min_length=6, description="New plaintext password")
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str = Field(..., description="Assigned role: ADMIN, MANAGER, ANALYST, VIEWER")
 
 
 class RegisterRequest(BaseModel):
@@ -142,3 +161,110 @@ def seed_demo_accounts_endpoint(db: Session = Depends(get_db)) -> dict[str, Any]
         "message": "Demo tenant accounts successfully initialized.",
         "accounts": [u.to_dict() for u in users],
     }
+
+
+@router.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Generate a password reset token for an existing user account."""
+    email_clean = req.email.strip().lower()
+    user = db.query(User).filter(User.email == email_clean).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with email '{email_clean}' not found.",
+        )
+
+    token = generate_password_reset_token(user.id, user.email)
+    logger.info("Generated password reset token for {}: {}", user.email, token)
+
+    return {
+        "message": "Password reset token generated",
+        "email": user.email,
+        "reset_token": token,
+        "master_token_hint": settings.admin_master_reset_token,
+    }
+
+
+@router.post("/reset-password")
+def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Reset user password using a verified reset token or admin master token."""
+    email_clean = req.email.strip().lower()
+    user = db.query(User).filter(User.email == email_clean).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with email '{email_clean}' not found.",
+        )
+
+    try:
+        claims = verify_password_reset_token(req.reset_token)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    if claims.get("type") == "reset":
+        if claims.get("email") and claims.get("email").lower() != email_clean:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reset token does not match the provided email address.",
+            )
+
+    user.password_hash = hash_password(req.new_password)
+    db.commit()
+    logger.info("Password successfully reset for {}", user.email)
+
+    return {
+        "status": "success",
+        "message": "Password reset successfully. You may now log in with your new password.",
+        "email": user.email,
+    }
+
+
+@router.get("/users")
+def list_organization_users(
+    current_user: User = Depends(require_role(["ADMIN", "MANAGER"])),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """List team members scoped to current user's tenant organization (ADMIN or MANAGER)."""
+    users = (
+        db.query(User)
+        .filter(User.org_id == current_user.org_id)
+        .order_by(User.created_at.asc())
+        .all()
+    )
+    return [u.to_dict() for u in users]
+
+
+@router.patch("/users/{user_id}")
+def update_user_role(
+    user_id: str,
+    req: UpdateRoleRequest,
+    current_user: User = Depends(require_role(["ADMIN"])),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Update a team member's role within current tenant organization (ADMIN only)."""
+    target_role = req.role.strip().upper()
+    if target_role not in RBAC_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role '{req.role}'. Allowed roles: {list(RBAC_ROLES)}",
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == user_id, User.org_id == current_user.org_id)
+        .first()
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found in your organization.",
+        )
+
+    user.role = target_role
+    db.commit()
+    db.refresh(user)
+    logger.info("User {} role updated to {} by Admin {}", user.email, target_role, current_user.email)
+    return user.to_dict()
