@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import requests
@@ -31,6 +31,17 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*", "X-Request-ID"],
 )
+
+
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "mode": "vercel_cloud_showcase", "version": "3.0.0"}
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 # Load pre-indexed benchmark chunks into memory
 INDEX_FILE = Path(__file__).parent / "demo_benchmark_index.json"

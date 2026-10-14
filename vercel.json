@@ -1,17 +1,27 @@
 {
-  "version": 2,
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "src/api/static"
+    },
+    "backend": {
+      "root": "api",
+      "framework": "fastapi",
+      "entrypoint": "index:app"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.py"
-    },
-    {
-      "source": "/",
-      "destination": "/src/api/static/index.html"
+      "destination": {
+        "service": "backend"
+      }
     },
     {
       "source": "/(.*)",
-      "destination": "/src/api/static/$1"
+      "destination": {
+        "service": "frontend"
+      }
     }
   ]
 }
