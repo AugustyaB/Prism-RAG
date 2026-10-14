@@ -178,7 +178,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = FastAPI(title="Enterprise RAG Pipeline API", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="ResinRAG Enterprise API", version="3.0.0", lifespan=lifespan)
 
 # Add Middleware Stack
 app.add_middleware(RateLimitMiddleware)

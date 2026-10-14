@@ -1,6 +1,6 @@
-# Changelog — Project-RAG_LLM
+# Changelog — ResinRAG
 
-All notable changes, architectural upgrades, and milestone completions for `Project-RAG_LLM` are documented in this file.
+All notable changes, architectural upgrades, and milestone completions for `ResinRAG` are documented in this file.
 
 ## [v3.0.0] — 2026-10-14 (Milestone v3.0 Production Platform Complete & Certified)
 

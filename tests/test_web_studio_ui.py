@@ -148,7 +148,7 @@ def test_web_studio_static_asset_integrity_and_visual_contract(client: TestClien
     # 1. Verify StaticFiles mount serves HTML, CSS, and JS over HTTP 200
     resp_html = client.get("/")
     assert resp_html.status_code == 200
-    assert "Project-RAG_LLM Enterprise Studio" in resp_html.text
+    assert "ResinRAG Enterprise Studio" in resp_html.text
 
     resp_css = client.get("/style.css")
     assert resp_css.status_code == 200
