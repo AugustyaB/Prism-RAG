@@ -2569,3 +2569,55 @@ body {
 .tool-call-chip strong {
   color: var(--text-primary);
 }
+
+/* ==========================================================================
+   19. CLOUD SHOWCASE (Vercel Live Demo Differentiation)
+   ========================================================================== */
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.showcase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-pill);
+}
+
+.github-btn {
+  color: var(--text-secondary);
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.github-btn:hover {
+  color: #ffffff;
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.cloud-demo-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius-sm);
+}
+.cloud-demo-banner svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #fbbf24;
+}

@@ -1694,7 +1694,42 @@ async function loadMetrics() {
 // ---------------------------------------------------------------------------
 // 8. INITIALIZATION & DOM EVENT WIRING
 // ---------------------------------------------------------------------------
+function isCloudShowcase() {
+  return (
+    window.location.hostname.includes('vercel.app') ||
+    window.location.hostname.includes('now.sh') ||
+    window.location.search.includes('showcase=true')
+  );
+}
+
+function detectCloudShowcase() {
+  if (isCloudShowcase()) {
+    document.body.classList.add('is-cloud-showcase');
+
+    const badge = document.getElementById('showcase-badge');
+    if (badge) badge.style.display = 'inline-flex';
+
+    const banner = document.getElementById('cloud-demo-banner');
+    if (banner) banner.style.display = 'flex';
+
+    const title = document.querySelector('.brand-title-row h1');
+    if (title) title.textContent = 'Prism-RAG Cloud Showcase';
+
+    const statusLabel = document.querySelector('.connection-indicator .status-label');
+    if (statusLabel) statusLabel.textContent = 'Live Web Demo';
+
+    // Default provider to Gemini for cloud demo
+    state.provider = 'gemini';
+    document.querySelectorAll('#provider-selector .toggle-btn[data-provider]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.provider === 'gemini');
+    });
+    const modelBadge = document.getElementById('active-model-badge');
+    if (modelBadge) modelBadge.textContent = 'gemini-2.5-flash';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  detectCloudShowcase();
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
   const modeBtns = document.querySelectorAll('#mode-selector .pill-btn[data-mode]');
@@ -2175,6 +2210,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async checkStoredSession() {
       const savedToken = localStorage.getItem('rag_access_token');
       if (!savedToken) {
+        if (isCloudShowcase()) {
+          // Zero-friction instant access for Cloud Showcase visitors
+          await loginPersona('admin_default');
+          return;
+        }
         this.show();
         return;
       }
