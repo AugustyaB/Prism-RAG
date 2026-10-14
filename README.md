@@ -1,5 +1,9 @@
 # Prism-RAG — Enterprise Knowledge Intelligence & Agentic RAG Platform
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-18181b.svg)](https://www.python.org/)
+[![Live Demo Branch](https://img.shields.io/badge/Vercel-Live_Showcase_Branch-10b981.svg)](https://github.com/AugustyaB/Prism-RAG/tree/demo)
+
 An enterprise-grade, self-hosted, GPU-accelerated **Agentic Retrieval-Augmented Generation (RAG)** platform built with **Python, FastAPI, Qdrant Hybrid Search, SQLAlchemy, PyMuPDF, EasyOCR, and SentenceTransformers**.
 
 Designed to ingest massive, heterogeneous enterprise documents (technical manuals, financial reports, compliance standards, and scanned forms), index them with **Parent-Child Chunking, Dense + Sparse BM25 Hybrid Search & Cross-Encoder Reranking**, operate a **Pure-Python Agentic State Machine (Multi-Query RRF, CRAG Self-Reflection & Tool Dispatcher)**, manage **Persistent Conversational Sessions**, enforce **Multi-Tenant JWT Authentication & Pre-Retrieval RBAC**, and provide an interactive **Multi-Turn Web Studio UI** adhering strictly to the **Titanium Obsidian & Emerald** design system.
