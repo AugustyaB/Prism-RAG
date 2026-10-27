@@ -1,5 +1,6 @@
 """Local GPU-accelerated embeddings using sentence-transformers."""
 
+import math
 from typing import List
 
 from loguru import logger
@@ -55,12 +56,13 @@ class LocalEmbedder:
                 raise RuntimeError(f"Reranker model initialization failed: {e}")
         return self._reranker
 
-    def rerank(self, query: str, texts: List[str]) -> List[float]:
-        """Score texts against a query using a Cross-Encoder.
+    def rerank(self, query: str, texts: List[str], temperature: float = 0.8) -> List[float]:
+        """Score texts against a query using a Cross-Encoder with optional temperature scaling.
         
         Args:
             query: The user query.
             texts: A list of string contexts to evaluate.
+            temperature: Temperature parameter for probability sharpening (default 0.8).
             
         Returns:
             A list of float scores representing relevance.
@@ -71,8 +73,27 @@ class LocalEmbedder:
             return [0.0] * len(texts)
             
         pairs = [[query, text] for text in texts]
-        scores = self.reranker.predict(pairs)
-        return scores.tolist()
+        raw_scores = self.reranker.predict(pairs)
+        scores_list = raw_scores.tolist() if hasattr(raw_scores, "tolist") else list(raw_scores)
+
+        if temperature == 1.0 or temperature <= 0.0:
+            return [round(float(s), 6) for s in scores_list]
+
+        scaled_scores: List[float] = []
+        inv_t = 1.0 / temperature
+        for s in scores_list:
+            s_val = float(s)
+            if 0.0 <= s_val <= 1.0:
+                p_clamped = max(1e-7, min(1.0 - 1e-7, s_val))
+                p_exp = p_clamped ** inv_t
+                q_exp = (1.0 - p_clamped) ** inv_t
+                denom = p_exp + q_exp
+                scaled = p_exp / denom if denom > 0.0 else s_val
+            else:
+                scaled = 1.0 / (1.0 + math.exp(-s_val / temperature))
+            scaled_scores.append(round(float(scaled), 6))
+
+        return scaled_scores
 
     @property
     def model(self):

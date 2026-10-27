@@ -29,7 +29,7 @@ class CRAGGrader:
         results: list[dict[str, Any]],
         loop_count: int = 0,
     ) -> dict[str, Any]:
-        """Evaluate retrieval candidates and return grading decision.
+        """Evaluate retrieval candidates and return grading decision with top-margin gap.
 
         Args:
             top_score: Highest Cross-Encoder rerank score from retrieval.
@@ -37,7 +37,7 @@ class CRAGGrader:
             loop_count: Number of previous reformulation attempts (max 1).
 
         Returns:
-            Dictionary containing grade, action, confidence, and loop guard.
+            Dictionary containing grade, action, confidence, margin_gap, and loop guard.
         """
         if not results or top_score is None:
             return {
@@ -45,17 +45,22 @@ class CRAGGrader:
                 "action": "abstain",
                 "reason": "EMPTY_RETRIEVAL",
                 "confidence": 0.0,
+                "margin_gap": 0.0,
                 "loop_count": loop_count,
             }
 
         score = float(top_score)
+        second_score = float(results[1].get("score", 0.0)) if len(results) > 1 else 0.0
+        margin_gap = max(0.0, score - second_score)
 
         if score >= self.HIGH_THRESHOLD:
+            reason = "HIGH_CONFIDENCE_DECISIVE" if margin_gap >= 0.10 else "HIGH_CONFIDENCE_SYNTHESIS"
             return {
                 "grade": "high",
                 "action": "proceed",
-                "reason": "HIGH_CONFIDENCE",
+                "reason": reason,
                 "confidence": score,
+                "margin_gap": round(margin_gap, 4),
                 "loop_count": loop_count,
             }
 
@@ -65,6 +70,7 @@ class CRAGGrader:
                 "action": "abstain",
                 "reason": "LOW_SCORE",
                 "confidence": score,
+                "margin_gap": round(margin_gap, 4),
                 "loop_count": loop_count,
             }
 
@@ -75,6 +81,7 @@ class CRAGGrader:
                 "action": "reformulate",
                 "reason": "MARGINAL_CONFIDENCE_RETRY",
                 "confidence": score,
+                "margin_gap": round(margin_gap, 4),
                 "loop_count": loop_count,
             }
 
@@ -91,6 +98,7 @@ class CRAGGrader:
             "action": action,
             "reason": reason,
             "confidence": score,
+            "margin_gap": round(margin_gap, 4),
             "loop_count": loop_count,
         }
 

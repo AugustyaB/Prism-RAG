@@ -247,7 +247,7 @@ def test_crag_grader_confidence_bands_and_single_retry_bound():
     res_high = grader.grade(top_score=0.45, results=[{"text": "Sample hit"}], loop_count=0)
     assert res_high["grade"] == "high"
     assert res_high["action"] == "proceed"
-    assert res_high["reason"] == "HIGH_CONFIDENCE"
+    assert res_high["reason"] in ("HIGH_CONFIDENCE", "HIGH_CONFIDENCE_DECISIVE")
     assert res_high["confidence"] == 0.45
 
     # Case 2: Low confidence (score < 0.05) -> Action: abstain

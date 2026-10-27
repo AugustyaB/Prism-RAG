@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+import re
 import time
 import uuid
 
@@ -13,10 +14,35 @@ from qdrant_client.http import models
 from src.config import settings
 from src.embeddings.embedder import LocalEmbedder
 from src.embeddings.sparse_bm25 import SparseBM25Encoder
-from src.ingestion.pipeline import IngestionResult
+
+if TYPE_CHECKING:
+    from src.ingestion.pipeline import IngestionResult
 
 VALID_RETRIEVAL_MODES = frozenset({"vector_only", "bm25_only", "hybrid_rrf", "hybrid_rerank"})
 RRF_K = 60.0
+
+
+def compute_query_alpha(query: str) -> float:
+    """Compute adaptive RRF dense weight alpha in [0.0, 1.0].
+
+    - Alpha -> 0.25 (BM25 prioritized) if query contains technical hyphenated/dotted codes,
+      snake_case, model numbers, or exact identifiers.
+    - Alpha -> 0.75 (Dense prioritized) if query is purely natural language prose (>= 6 words).
+    - Alpha -> 0.50 (Balanced hybrid) otherwise.
+    """
+    if not query or not query.strip():
+        return 0.50
+    clean_q = query.strip()
+    words = re.findall(r"\b[A-Za-z0-9_-]+\b", clean_q)
+    has_code = any(
+        ("-" in w or "_" in w or (bool(re.search(r"\d", w)) and bool(re.search(r"[A-Za-z]", w))))
+        for w in words
+    )
+    if has_code:
+        return 0.25
+    if len(words) >= 6 and not any(bool(re.search(r"\d", w)) for w in words):
+        return 0.75
+    return 0.50
 
 
 def combine_filters(
@@ -224,9 +250,10 @@ class VectorStore:
         mode: str = "hybrid_rerank",
         query_filter: models.Filter | None = None,
         collector: Any = None,
+        alpha: float | None = None,
     ) -> list[dict[str, Any]]:
         """Execute multi-mode retrieval (`vector_only`, `bm25_only`, `hybrid_rrf`, `hybrid_rerank`)
-        with Reciprocal Rank Fusion (`k=60`), Parent Block Deduplication, and Cross-Encoder Reranking.
+        with Reciprocal Rank Fusion (`k=60`), Adaptive Alpha Weighting, Parent Block Deduplication, and Cross-Encoder Reranking.
         """
         if not query or not query.strip():
             return []
@@ -298,7 +325,11 @@ class VectorStore:
             for hit in sparse_hits:
                 candidates.append({"hit": hit, "stage1_score": float(hit.score)})
         else:
-            # Reciprocal Rank Fusion (k=60) over 1-indexed Dense and Sparse rankings
+            # Adaptive Weighted Reciprocal Rank Fusion (W-RRF, k=60)
+            eff_alpha = alpha if alpha is not None else compute_query_alpha(query)
+            dense_weight = 2.0 * eff_alpha
+            sparse_weight = 2.0 * (1.0 - eff_alpha)
+
             hit_map: dict[str, Any] = {}
             rrf_scores: dict[str, float] = {}
             raw_tiebreak: dict[str, float] = {}
@@ -306,14 +337,14 @@ class VectorStore:
             for rank_d, hit in enumerate(dense_hits, start=1):
                 pid = str(hit.id)
                 hit_map[pid] = hit
-                rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (1.0 / (RRF_K + rank_d))
+                rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (dense_weight / (RRF_K + rank_d))
                 score_d = float(hit.score)
                 raw_tiebreak[pid] = max(raw_tiebreak[pid], score_d) if pid in raw_tiebreak else score_d
 
             for rank_s, hit in enumerate(sparse_hits, start=1):
                 pid = str(hit.id)
                 hit_map[pid] = hit
-                rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (1.0 / (RRF_K + rank_s))
+                rrf_scores[pid] = rrf_scores.get(pid, 0.0) + (sparse_weight / (RRF_K + rank_s))
                 score_s = float(hit.score)
                 raw_tiebreak[pid] = max(raw_tiebreak[pid], score_s) if pid in raw_tiebreak else score_s
 

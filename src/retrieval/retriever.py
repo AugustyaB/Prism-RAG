@@ -23,6 +23,32 @@ def _clean_text_artifacts(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
+def compute_information_novelty(
+    candidate_tokens: set[str],
+    seen_token_sets: list[set[str]],
+) -> float:
+    """Compute Information Novelty Index (INI) in [0.0, 1.0] using Jaccard set distance.
+
+    INI(d_k, S) = 1.0 - max_{S_i in S} (|T(d_k) cap S_i| / |T(d_k) cup S_i|)
+    Returns 1.0 if seen_token_sets is empty or candidate_tokens has zero overlap with seen sets.
+    """
+    if not candidate_tokens:
+        return 0.0
+    if not seen_token_sets:
+        return 1.0
+    max_sim = 0.0
+    for seen in seen_token_sets:
+        if not seen:
+            continue
+        intersection_len = len(candidate_tokens & seen)
+        union_len = len(candidate_tokens | seen)
+        if union_len > 0:
+            sim = intersection_len / union_len
+            if sim > max_sim:
+                max_sim = sim
+    return round(max(0.0, 1.0 - max_sim), 4)
+
+
 class Retriever:
     """Manages multi-mode context retrieval, multi-query RRF decomposition, and CRAG self-reflection."""
 
@@ -49,6 +75,7 @@ class Retriever:
         collector: Any = None,
         enable_multi_query: bool = False,
         enable_crag: bool = True,
+        alpha: float | None = None,
     ) -> dict[str, Any]:
         """Execute hybrid retrieval, multi-query RRF expansion, and CRAG self-reflection."""
         logger.info("Retrieving context for query: '{}' (mode={})", query, mode)
@@ -79,6 +106,7 @@ class Retriever:
                 mode=effective_mode,
                 query_filter=active_filter,
                 collector=collector,
+                alpha=alpha,
             )
 
         # Tier 1a: Empty Retrieval Abstention
@@ -176,6 +204,51 @@ class Retriever:
                     len(filtered_results),
                 )
                 results = filtered_results
+
+        # Dynamic Context Pruning via Information Novelty Index (INI)
+        # Yield(d_k) = s_rerank * INI >= tau_yield (0.05).
+        # Chunk 1 (top hit) is unconditionally preserved. Subsequent chunks with Yield < tau_yield are pruned.
+        tau_yield = 0.05
+        pruned_results: list[dict[str, Any]] = []
+        seen_token_sets: list[set[str]] = []
+
+        for idx, hit in enumerate(results):
+            raw_block = (
+                hit.get("parent_text")
+                or (hit.get("metadata") or {}).get("parent_text")
+                or hit.get("text", "")
+            )
+            cand_tokens = set(re.findall(r"\b\w+\b", raw_block.lower()))
+            score = float(hit.get("score", 0.0))
+
+            if idx == 0:
+                ini = 1.0
+                yield_val = score
+                keep = True
+            else:
+                ini = compute_information_novelty(cand_tokens, seen_token_sets)
+                yield_val = score * ini
+                keep = yield_val >= tau_yield
+
+            hit["ini"] = round(ini, 4)
+            hit["yield"] = round(yield_val, 4)
+
+            if keep:
+                pruned_results.append(hit)
+                if cand_tokens:
+                    seen_token_sets.append(cand_tokens)
+            else:
+                logger.info(
+                    "Context Pruned chunk idx={} (score={:.3f}, ini={:.3f}, yield={:.3f} < tau_yield={:.2f})",
+                    idx,
+                    score,
+                    ini,
+                    yield_val,
+                    tau_yield,
+                )
+
+        if pruned_results:
+            results = pruned_results
 
         context_blocks: list[str] = []
         for hit in results:

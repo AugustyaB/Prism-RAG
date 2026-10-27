@@ -1,11 +1,16 @@
 """PDF parser — loads PDFs and extracts text/image info per page."""
 
+from __future__ import annotations
+
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
 from loguru import logger
 
 

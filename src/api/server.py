@@ -114,36 +114,48 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 
 class SlidingWindowRateLimiter:
-    """Thread-safe in-memory sliding window rate limiter tracking request timestamps per client."""
+    """Thread-safe O(1) continuous Token Bucket rate limiter with refill rate r = L / W."""
 
     def __init__(self, window_seconds: float = 60.0):
         self.window = window_seconds
-        self.history: dict[str, list[float]] = {}
+        self.buckets: dict[str, list[float]] = {}
+        self.history = self.buckets
         self._lock = threading.Lock()
 
     def is_allowed(self, client_key: str, limit: int | None = None) -> tuple[bool, int]:
-        """Check if request is within allowed rate. Returns (is_allowed, retry_after_seconds)."""
+        """Check if request is within allowed rate using O(1) continuous token replenishment.
+
+        Refill rate: r = capacity / window_seconds
+        Returns (is_allowed, retry_after_seconds).
+        """
         now = time.time()
-        cutoff = now - self.window
-        active_limit = limit if limit is not None else settings.rate_limit_requests_per_minute
+        capacity = float(limit if limit is not None else settings.rate_limit_requests_per_minute)
+        refill_rate = capacity / self.window
 
         with self._lock:
-            timestamps = self.history.get(client_key, [])
-            valid_timestamps = [t for t in timestamps if t > cutoff]
-            if len(valid_timestamps) >= active_limit:
-                oldest = valid_timestamps[0]
-                retry_after = max(1, int(math.ceil(self.window - (now - oldest))))
-                self.history[client_key] = valid_timestamps
-                return False, retry_after
+            state = self.buckets.get(client_key)
+            if state is None:
+                self.buckets[client_key] = [capacity - 1.0, now]
+                return True, 0
 
-            valid_timestamps.append(now)
-            self.history[client_key] = valid_timestamps
-            return True, 0
+            tokens, last_update = state
+            elapsed = max(0.0, now - last_update)
+            tokens = min(capacity, tokens + elapsed * refill_rate)
+
+            if tokens >= 1.0:
+                tokens -= 1.0
+                self.buckets[client_key] = [tokens, now]
+                return True, 0
+
+            deficit = 1.0 - tokens
+            retry_after = max(1, int(math.ceil(deficit / refill_rate)))
+            self.buckets[client_key] = [tokens, now]
+            return False, retry_after
 
     def reset(self) -> None:
-        """Clear rate limiter history (useful for test resets)."""
+        """Clear rate limiter state (useful for test resets)."""
         with self._lock:
-            self.history.clear()
+            self.buckets.clear()
 
 
 rate_limiter = SlidingWindowRateLimiter(window_seconds=60.0)

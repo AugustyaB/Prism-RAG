@@ -1,11 +1,16 @@
 """OCR engine — GPU-accelerated text extraction from image-based PDF pages."""
 
+from __future__ import annotations
+
 import signal
 import numpy as np
 from io import BytesIO
 from pathlib import Path
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
 from PIL import Image
 from loguru import logger
 

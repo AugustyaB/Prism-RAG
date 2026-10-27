@@ -25,21 +25,23 @@ _TOKEN_PATTERN = re.compile(
 
 
 class SparseBM25Encoder:
-    """Encodes text into deterministic sparse term-frequency vectors for Qdrant Modifier.IDF.
+    """Encodes text into deterministic sparse term-frequency vectors with BM25+ lower-bound saturation (L3).
 
     Preserves exact technical identifiers (`ERR-CV-4092`, `POL-SEC-104.2`, `_render_page_to_image`)
-    alongside constituent sub-tokens so both exact-code and partial-identifier queries match.
+    alongside constituent sub-tokens with a delta lower-bound (BM25+) to prevent length penalty starvation.
     """
 
     def __init__(
         self,
         k1: float = 1.2,
         b: float = 0.75,
-        avg_dl: float = 50.0,
+        avg_dl: float = 65.0,
+        delta: float = 0.5,
     ) -> None:
         self.k1 = k1
         self.b = b
         self.avg_dl = avg_dl
+        self.delta = delta
 
     @staticmethod
     def _token_to_index(token: str) -> int:
@@ -91,7 +93,7 @@ class SparseBM25Encoder:
 
         for idx in sorted(idx_counts.keys()):
             tf = float(idx_counts[idx])
-            weight = ((self.k1 + 1.0) * tf) / (norm_factor + tf)
+            weight = (((self.k1 + 1.0) * tf) / (norm_factor + tf)) + self.delta
             indices.append(idx)
             values.append(round(float(weight), 6))
 

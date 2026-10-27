@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Dict
 
-import fitz
+try:
+    import fitz
+except ImportError:
+    fitz = None
 import psutil
 from loguru import logger
 
@@ -83,56 +86,85 @@ class IngestionPipeline:
         total_pages = 0
 
         # 2. Open PDF once and iterate pages directly
-        try:
-            doc = fitz.open(str(pdf_path))
-        except Exception as e:
-            raise RuntimeError(f"Failed to open PDF: {pdf_path} — {e}") from e
+        if fitz is not None:
+            try:
+                doc = fitz.open(str(pdf_path))
+            except Exception as e:
+                raise RuntimeError(f"Failed to open PDF: {pdf_path} — {e}") from e
 
-        try:
-            if doc.is_encrypted:
-                logger.warning("PDF is password-protected, skipping: {}", source_pdf)
-                errors.append(f"PDF is password-protected: {source_pdf}")
-            else:
-                total_pages = len(doc)
-                if progress_callback:
-                    progress_callback(0, total_pages, "PARSING")
+            try:
+                if doc.is_encrypted:
+                    logger.warning("PDF is password-protected, skipping: {}", source_pdf)
+                    errors.append(f"PDF is password-protected: {source_pdf}")
+                else:
+                    total_pages = len(doc)
+                    if progress_callback:
+                        progress_callback(0, total_pages, "PARSING")
 
-                for idx in range(total_pages):
-                    self._check_memory()
-                    page_num = idx + 1
-                    try:
-                        page_result = self.parser.extract_page(doc, idx, source_pdf)
-                        page_type = self.classifier.classify(page_result)
-                        classifications[page_type] += 1
+                    for idx in range(total_pages):
+                        self._check_memory()
+                        page_num = idx + 1
+                        try:
+                            page_result = self.parser.extract_page(doc, idx, source_pdf)
+                            page_type = self.classifier.classify(page_result)
+                            classifications[page_type] += 1
 
-                        stage = "PARSING" if page_type == PageType.TEXT else "OCR"
-                        if progress_callback:
-                            progress_callback(idx, total_pages, stage)
+                            stage = "PARSING" if page_type == PageType.TEXT else "OCR"
+                            if progress_callback:
+                                progress_callback(idx, total_pages, stage)
 
-                        final_text = ""
-                        if page_type == PageType.TEXT:
-                            final_text = page_result.raw_text
-                        elif page_type == PageType.IMAGE:
-                            ocr = self.get_ocr_engine()
-                            final_text = ocr.extract_text(doc[idx], page_num)
-                        elif page_type == PageType.MIXED:
-                            ocr = self.get_ocr_engine()
-                            final_text = ocr.extract_from_regions(
-                                doc[idx],
-                                page_num,
-                                page_result.raw_text,
-                            )
+                            final_text = ""
+                            if page_type == PageType.TEXT:
+                                final_text = page_result.raw_text
+                            elif page_type == PageType.IMAGE:
+                                ocr = self.get_ocr_engine()
+                                final_text = ocr.extract_text(doc[idx], page_num)
+                            elif page_type == PageType.MIXED:
+                                ocr = self.get_ocr_engine()
+                                final_text = ocr.extract_from_regions(
+                                    doc[idx],
+                                    page_num,
+                                    page_result.raw_text,
+                                )
 
-                        extracted_pages.append((page_num, final_text, source_pdf))
-                        if progress_callback:
-                            progress_callback(page_num, total_pages, stage)
+                            extracted_pages.append((page_num, final_text, source_pdf))
+                            if progress_callback:
+                                progress_callback(page_num, total_pages, stage)
 
-                    except Exception as e:
-                        err_msg = f"Failed to route/extract page {page_num}: {e}"
-                        logger.error(err_msg)
-                        errors.append(err_msg)
-        finally:
-            doc.close()
+                        except Exception as e:
+                            err_msg = f"Failed to route/extract page {page_num}: {e}"
+                            logger.error(err_msg)
+                            errors.append(err_msg)
+            finally:
+                doc.close()
+        else:
+            # Pure-Python fallback using pypdf when PyMuPDF C extensions are unavailable
+            try:
+                from pypdf import PdfReader
+
+                reader = PdfReader(str(pdf_path))
+                if reader.is_encrypted:
+                    logger.warning("PDF is password-protected, skipping: {}", source_pdf)
+                    errors.append(f"PDF is password-protected: {source_pdf}")
+                else:
+                    total_pages = len(reader.pages)
+                    if progress_callback:
+                        progress_callback(0, total_pages, "PARSING")
+
+                    for idx in range(total_pages):
+                        page_num = idx + 1
+                        try:
+                            text = reader.pages[idx].extract_text() or ""
+                            classifications[PageType.TEXT] += 1
+                            extracted_pages.append((page_num, text, source_pdf))
+                            if progress_callback:
+                                progress_callback(page_num, total_pages, "PARSING")
+                        except Exception as e:
+                            err_msg = f"Failed to extract page {page_num}: {e}"
+                            logger.error(err_msg)
+                            errors.append(err_msg)
+            except Exception as e:
+                raise RuntimeError(f"Failed to open PDF with pypdf fallback: {pdf_path} — {e}") from e
 
         # 3. Chunk collected text
         if progress_callback:

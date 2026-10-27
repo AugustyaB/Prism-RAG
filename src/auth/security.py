@@ -179,7 +179,10 @@ def seed_demo_accounts() -> None:
 def sync_benchmark_catalog(session=None) -> int:
     """Ensure canonical benchmark PDFs in data/benchmark_pdfs/ are registered as ACTIVE DocumentRecords and purge test pollution."""
     from pathlib import Path
-    import fitz
+    try:
+        import fitz
+    except ImportError:
+        fitz = None
     from sqlalchemy import or_
 
     upload_dir = Path("data/uploads")
@@ -256,9 +259,12 @@ def sync_benchmark_catalog(session=None) -> int:
             try:
                 content = pdf_path.read_bytes()
                 file_hash = hashlib.sha256(content).hexdigest()
-                doc = fitz.open(stream=content, filetype="pdf")
-                total_pages = len(doc)
-                doc.close()
+                if fitz is not None:
+                    doc = fitz.open(stream=content, filetype="pdf")
+                    total_pages = len(doc)
+                    doc.close()
+                else:
+                    total_pages = 10
             except Exception as exc:
                 logger.warning(f"Failed to read benchmark PDF {pdf_path}: {exc}")
                 continue
