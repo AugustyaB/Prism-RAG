@@ -130,7 +130,9 @@ class SlidingWindowRateLimiter:
         """
         now = time.time()
         capacity = float(limit if limit is not None else settings.rate_limit_requests_per_minute)
-        refill_rate = capacity / self.window
+        if capacity <= 0.0:
+            return False, int(self.window)
+        refill_rate = capacity / max(1e-4, self.window)
 
         with self._lock:
             state = self.buckets.get(client_key)
@@ -148,7 +150,7 @@ class SlidingWindowRateLimiter:
                 return True, 0
 
             deficit = 1.0 - tokens
-            retry_after = max(1, int(math.ceil(deficit / refill_rate)))
+            retry_after = max(1, int(math.ceil(deficit / refill_rate))) if refill_rate > 0.0 else int(self.window)
             self.buckets[client_key] = [tokens, now]
             return False, retry_after
 

@@ -34,7 +34,8 @@ def compute_query_alpha(query: str) -> float:
         return 0.50
     clean_q = query.strip()
     words = re.findall(r"\b[A-Za-z0-9_-]+\b", clean_q)
-    has_code = any(
+    has_dotted = bool(re.search(r"\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+(?::\d+)?\b", clean_q))
+    has_code = has_dotted or any(
         ("-" in w or "_" in w or (bool(re.search(r"\d", w)) and bool(re.search(r"[A-Za-z]", w))))
         for w in words
     )

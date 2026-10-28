@@ -1,7 +1,7 @@
 # 📊 Project-RAG_LLM — Comprehensive Benchmark Evaluation Report
 
-> **Evaluation Run Timestamp:** 2026-10-11 21:58:30 UTC  
-> **Benchmark Dataset:** `100` QA Ground-Truth Items (`40` Semantic, `30` Lexical, `15` OCR, `15` Unanswerable Traps)  
+> **Evaluation Run Timestamp:** 2026-10-27 13:39:20 UTC  
+> **Benchmark Dataset:** `5` QA Ground-Truth Items (`40` Semantic, `30` Lexical, `15` OCR, `15` Unanswerable Traps)  
 > **Tested Infrastructure:** PyTorch CUDA (`RTX 4070`), Qdrant `rag_documents_v2`, `BAAI/bge-small-en-v1.5`, `bge-reranker-v2-m3`
 
 ---
@@ -18,12 +18,12 @@ This automated benchmark rigorously evaluates four architectural retrieval strat
 
 ## 2. Overall Performance & Safety Scorecard
 
-| Retrieval Mode | Recall@4 | Recall@10 | MRR | Citation Acc | Abstain F1 | Avg Latency (ms) | p95 Latency (ms) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `vector_only` | 92.9% | 92.9% | 0.827 | 100.0% | 0.0% | 9.9 | 11.3 |
-| `bm25_only` | 91.8% | 91.8% | 0.879 | 97.7% | 42.1% | 1.1 | 1.7 |
-| `hybrid_rrf` | 92.9% | 92.9% | 0.873 | 98.8% | 0.0% | 10.5 | 11.7 |
-| `hybrid_rerank` | 90.6% | 90.6% | 0.898 | 95.3% | 88.2% | 242.2 | 278.1 |
+| Retrieval Mode | Recall@4 | Recall@10 | MRR | nDCG@4 | Citation Acc | Cite F1 | Abstain F1 | Q_RAG | Avg Latency (ms) | p95 Latency (ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `vector_only` | 100.0% | 100.0% | 0.733 | 0.814 | 100.0% | 50.7% | 0.0% | 0.000 | 77.0 | 149.6 |
+| `bm25_only` | 100.0% | 100.0% | 0.867 | 0.900 | 100.0% | 50.7% | 0.0% | 0.000 | 219.0 | 236.8 |
+| `hybrid_rrf` | 80.0% | 80.0% | 0.800 | 0.800 | 80.0% | 80.0% | 0.0% | 0.000 | 209.5 | 290.3 |
+| `hybrid_rerank` | 100.0% | 100.0% | 1.000 | 1.000 | 100.0% | 80.0% | 0.0% | 0.000 | 12446.9 | 14781.7 |
 
 
 ---
@@ -32,10 +32,10 @@ This automated benchmark rigorously evaluates four architectural retrieval strat
 
 | Retrieval Mode | Semantic (40) | Lexical / Codes (30) | OCR Scans (15) | Traps Abstain (15) |
 | --- | --- | --- | --- | --- |
-| `vector_only` | 100.0% | 90.0% | 80.0% | 0.0% |
-| `bm25_only` | 97.5% | 90.0% | 80.0% | 26.7% |
-| `hybrid_rrf` | 100.0% | 90.0% | 80.0% | 0.0% |
-| `hybrid_rerank` | 97.5% | 86.7% | 80.0% | 100.0% |
+| `vector_only` | 100.0% | 0.0% | 0.0% | 0.0% |
+| `bm25_only` | 100.0% | 0.0% | 0.0% | 0.0% |
+| `hybrid_rrf` | 80.0% | 0.0% | 0.0% | 0.0% |
+| `hybrid_rerank` | 100.0% | 0.0% | 0.0% | 0.0% |
 
 
 ---

@@ -68,8 +68,11 @@ def build_markdown_report(comparison: dict[str, Any]) -> str:
         "Recall@4",
         "Recall@10",
         "MRR",
+        "nDCG@4",
         "Citation Acc",
+        "Cite F1",
         "Abstain F1",
+        "Q_RAG",
         "Avg Latency (ms)",
         "p95 Latency (ms)",
     ]
@@ -85,8 +88,11 @@ def build_markdown_report(comparison: dict[str, Any]) -> str:
                 f"{m_met.get('recall_at_4', 0.0) * 100:.1f}%",
                 f"{m_met.get('recall_at_10', 0.0) * 100:.1f}%",
                 f"{m_met.get('mrr', 0.0):.3f}",
+                f"{m_met.get('ndcg_at_4', 0.0):.3f}",
                 f"{m_met.get('citation_accuracy', 0.0) * 100:.1f}%",
+                f"{m_met.get('citation_f1', 0.0) * 100:.1f}%",
                 f"{m_abs.get('f1', 0.0) * 100:.1f}%",
+                f"{m_met.get('q_rag', 0.0):.3f}",
                 f"{m_lat.get('avg_ms', 0.0):.1f}",
                 f"{m_lat.get('p95_ms', 0.0):.1f}",
             ]
@@ -261,7 +267,7 @@ def main():
     print("🏆 RAG RETRIEVAL BENCHMARK SCORECARD")
     print("=" * 80)
 
-    scorecard_headers = ["Mode", "Recall@4", "MRR", "Citation", "Abstain F1", "Avg Latency", "p95 Latency"]
+    scorecard_headers = ["Mode", "Recall@4", "MRR", "nDCG@4", "Citation", "Cite F1", "Abstain F1", "Q_RAG", "Avg Latency", "p95 Latency"]
     scorecard_rows = []
     for m in modes:
         minfo = comparison["modes"].get(m, {})
@@ -273,8 +279,11 @@ def main():
                 m,
                 f"{met.get('recall_at_4', 0.0) * 100:.1f}%",
                 f"{met.get('mrr', 0.0):.3f}",
+                f"{met.get('ndcg_at_4', 0.0):.3f}",
                 f"{met.get('citation_accuracy', 0.0) * 100:.1f}%",
+                f"{met.get('citation_f1', 0.0) * 100:.1f}%",
                 f"{abs_m.get('f1', 0.0) * 100:.1f}%",
+                f"{met.get('q_rag', 0.0):.3f}",
                 f"{lat.get('avg_ms', 0.0):.1f}ms",
                 f"{lat.get('p95_ms', 0.0):.1f}ms",
             ]

@@ -224,11 +224,11 @@ def test_sparse_bm25_encoder_identifiers_saturation_and_stopword_fallback():
     assert "render" in tokens
     assert "pol-sec-104.2" in tokens
 
-    # BM25 saturation check: 10x term repetition stays strictly bounded below k1 + 1 (2.2)
+    # BM25+ saturation check: 10x term repetition stays strictly bounded below k1 + 1 + delta (2.7)
     _, vals_single = encoder.encode_document("err-cv-4092")
     _, vals_repeated = encoder.encode_document(" ".join(["err-cv-4092"] * 10))
     assert vals_repeated[0] > vals_single[0]
-    assert vals_repeated[0] < 2.2
+    assert vals_repeated[0] < (encoder.k1 + 1.0 + getattr(encoder, "delta", 0.0))
 
     # Stopword-only query fallback: must not degenerate to empty vector ([], [])
     sw_indices, sw_values = encoder.encode_query("what is the")

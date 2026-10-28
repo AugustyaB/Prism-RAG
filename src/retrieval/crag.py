@@ -50,8 +50,9 @@ class CRAGGrader:
             }
 
         score = float(top_score)
-        second_score = float(results[1].get("score", 0.0)) if len(results) > 1 else 0.0
-        margin_gap = max(0.0, score - second_score)
+        raw_sec = results[1].get("score") if len(results) > 1 else 0.0
+        second_score = float(raw_sec if raw_sec is not None else 0.0)
+        margin_gap = round(max(0.0, score - second_score), 4)
 
         if score >= self.HIGH_THRESHOLD:
             reason = "HIGH_CONFIDENCE_DECISIVE" if margin_gap >= 0.10 else "HIGH_CONFIDENCE_SYNTHESIS"

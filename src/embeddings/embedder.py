@@ -90,7 +90,8 @@ class LocalEmbedder:
                 denom = p_exp + q_exp
                 scaled = p_exp / denom if denom > 0.0 else s_val
             else:
-                scaled = 1.0 / (1.0 + math.exp(-s_val / temperature))
+                exp_arg = max(-50.0, min(50.0, -s_val / max(1e-4, temperature)))
+                scaled = 1.0 / (1.0 + math.exp(exp_arg))
             scaled_scores.append(round(float(scaled), 6))
 
         return scaled_scores

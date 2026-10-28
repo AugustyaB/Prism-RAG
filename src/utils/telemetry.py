@@ -31,6 +31,120 @@ class TelemetrySpan:
         self.elapsed_ms = round((time.perf_counter() - self.start_time) * 1000.0, 3)
 
 
+class WelfordRunningStats:
+    """O(1) memory and time streaming accumulator using Welford's algorithm."""
+
+    def __init__(self) -> None:
+        self.count: int = 0
+        self.mean: float = 0.0
+        self._m2: float = 0.0
+
+    def update(self, x: float) -> None:
+        """Update running statistics with a new scalar sample x."""
+        self.count += 1
+        delta = x - self.mean
+        self.mean += delta / self.count
+        delta2 = x - self.mean
+        self._m2 += delta * delta2
+
+    @property
+    def variance(self) -> float:
+        """Sample variance s^2 = M2 / (n - 1) for n > 1 with floating-point roundoff protection."""
+        return max(0.0, self._m2 / (self.count - 1)) if self.count > 1 else 0.0
+
+    @property
+    def population_variance(self) -> float:
+        """Population variance sigma^2 = M2 / n for n > 0 with floating-point roundoff protection."""
+        return max(0.0, self._m2 / self.count) if self.count > 0 else 0.0
+
+    @property
+    def std_dev(self) -> float:
+        """Standard deviation sigma = sqrt(max(0.0, variance))."""
+        return math.sqrt(max(0.0, self.variance))
+
+
+class LatencyAnomalyDetector:
+    """Z-Score streaming latency anomaly detector using Welford's statistics."""
+
+    def __init__(self, z_threshold: float = 3.0, min_samples: int = 5) -> None:
+        self.z_threshold: float = z_threshold
+        self.min_samples: int = min_samples
+        self.stats: WelfordRunningStats = WelfordRunningStats()
+        self.anomaly_count: int = 0
+
+    def record_and_check(self, latency_ms: float) -> tuple[bool, float]:
+        """Record latency measurement and check if Z >= threshold.
+
+        Returns:
+            (is_anomaly, z_score)
+        """
+        if self.stats.count < self.min_samples:
+            self.stats.update(latency_ms)
+            return False, 0.0
+
+        mean = self.stats.mean
+        sigma = self.stats.std_dev
+        if sigma <= 1e-6:
+            self.stats.update(latency_ms)
+            return False, 0.0
+
+        z = (latency_ms - mean) / sigma
+        is_anomaly = bool(z >= self.z_threshold)
+        if is_anomaly:
+            self.anomaly_count += 1
+            logger.warning(
+                "Latency anomaly detected: {:.2f}ms (Z={:.2f} >= threshold {:.1f}, mean={:.2f}ms, sigma={:.2f}ms)",
+                latency_ms,
+                z,
+                self.z_threshold,
+                mean,
+                sigma,
+            )
+
+        self.stats.update(latency_ms)
+        return is_anomaly, round(z, 3)
+
+
+class EMALatencyTracker:
+    """Tracks latency drift across stages using Exponential Moving Average (EMA).
+
+    EMA_t = beta * EMA_{t-1} + (1 - beta) * latency_t
+    """
+
+    def __init__(self, beta: float = 0.90) -> None:
+        self.beta: float = beta
+        self.emas: dict[str, float] = {}
+
+    def update(self, stage: str, latency_ms: float) -> float:
+        """Update EMA for a pipeline stage and return the new smoothed EMA."""
+        if stage not in self.emas:
+            self.emas[stage] = round(latency_ms, 3)
+        else:
+            prev = self.emas[stage]
+            new_val = self.beta * prev + (1.0 - self.beta) * latency_ms
+            self.emas[stage] = round(new_val, 3)
+        return self.emas[stage]
+
+    def get_stage_ema(self, stage: str) -> float:
+        """Get the current EMA for a stage or 0.0."""
+        return self.emas.get(stage, 0.0)
+
+    def to_dict(self) -> dict[str, float]:
+        """Return snapshot of stage EMAs."""
+        return dict(self.emas)
+
+
+global_anomaly_detector = LatencyAnomalyDetector(z_threshold=3.0, min_samples=5)
+global_ema_tracker = EMALatencyTracker(beta=0.90)
+
+
+def reset_global_telemetry_trackers() -> None:
+    """Reset the global anomaly detector and EMA latency tracker (useful for test resets)."""
+    global global_anomaly_detector, global_ema_tracker
+    global_anomaly_detector = LatencyAnomalyDetector(z_threshold=3.0, min_samples=5)
+    global_ema_tracker = EMALatencyTracker(beta=0.90)
+
+
 class TelemetryCollector:
     """Aggregates pipeline stage latencies, token consumption, and cost accounting."""
 
@@ -48,6 +162,9 @@ class TelemetryCollector:
         self.top_rerank_score: float | None = None
         self.abstained: bool = False
         self.abstention_reason: str | None = None
+        self.is_anomaly: bool = False
+        self.z_score: float = 0.0
+        self._finalized_anomaly: bool = False
         self._start_total: float = time.perf_counter()
 
     def start_span(self, name: str) -> TelemetrySpan:
@@ -66,11 +183,16 @@ class TelemetryCollector:
             self.llm_latency_ms = round(elapsed_ms, 3)
         elif stage == "total":
             self.total_latency_ms = round(elapsed_ms, 3)
+        global_ema_tracker.update(stage, elapsed_ms)
 
     def finalize_total(self) -> float:
         """Finalize total end-to-end execution latency in milliseconds."""
         if self.total_latency_ms == 0.0:
             self.total_latency_ms = round((time.perf_counter() - self._start_total) * 1000.0, 3)
+        if not self._finalized_anomaly:
+            self.is_anomaly, self.z_score = global_anomaly_detector.record_and_check(self.total_latency_ms)
+            global_ema_tracker.update("total", self.total_latency_ms)
+            self._finalized_anomaly = True
         return self.total_latency_ms
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +213,9 @@ class TelemetryCollector:
             "top_rerank_score": self.top_rerank_score,
             "abstained": self.abstained,
             "abstention_reason": self.abstention_reason,
+            "is_anomaly": self.is_anomaly,
+            "z_score": self.z_score,
+            "stage_emas": global_ema_tracker.to_dict(),
         }
 
 
@@ -230,6 +355,12 @@ def get_aggregated_metrics(session: Session, org_id: str | None = None) -> dict[
             },
             "by_mode": {},
             "by_provider": {},
+            "anomalies": {
+                "anomalies_detected": global_anomaly_detector.anomaly_count,
+                "running_mean_ms": round(global_anomaly_detector.stats.mean, 2),
+                "running_std_dev_ms": round(global_anomaly_detector.stats.std_dev, 2),
+            },
+            "stage_emas": global_ema_tracker.to_dict(),
         }
 
     abstained_count = sum(1 for r in records if r.abstained)
@@ -266,4 +397,10 @@ def get_aggregated_metrics(session: Session, org_id: str | None = None) -> dict[
         },
         "by_mode": by_mode,
         "by_provider": by_provider,
+        "anomalies": {
+            "anomalies_detected": global_anomaly_detector.anomaly_count,
+            "running_mean_ms": round(global_anomaly_detector.stats.mean, 2),
+            "running_std_dev_ms": round(global_anomaly_detector.stats.std_dev, 2),
+        },
+        "stage_emas": global_ema_tracker.to_dict(),
     }

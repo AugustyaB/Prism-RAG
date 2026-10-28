@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import shutil
 import threading
 import time
@@ -20,6 +21,57 @@ from src.database.relational import SessionLocal, init_db
 from src.database.vector_store import VectorStore
 from src.ingestion.pdf_parser import PdfParser
 from src.ingestion.pipeline import IngestionPipeline
+
+
+def compute_backoff_with_jitter(
+    attempt: int,
+    t_base: float = 0.5,
+    t_max: float = 10.0,
+) -> float:
+    """Calculate exponential backoff with decorrelated uniform jitter.
+
+    t_backoff = min(t_max, Uniform(0, t_base * 2^attempt))
+    """
+    upper = t_base * (2.0 ** attempt)
+    jittered = random.uniform(0.0, upper)
+    return round(min(t_max, jittered), 3)
+
+
+def estimate_ingestion_eta(
+    total_pages: int,
+    processed_pages: int,
+    t_page_avg: float = 1.5,
+) -> float:
+    """Linear Regression / Running Average ETA Estimator for PDF ingestion.
+
+    ETA_sec = (N_total - N_done) * t_page_avg
+    """
+    remaining = max(0, total_pages - processed_pages)
+    return round(remaining * t_page_avg, 2)
+
+
+class PageProcessingEtaEstimator:
+    """Streaming tracker for page processing duration and dynamic ETA estimation."""
+
+    def __init__(self, default_t_page: float = 1.5) -> None:
+        self.default_t_page: float = default_t_page
+        self.page_durations: list[float] = []
+
+    def record_page_time(self, duration_sec: float) -> None:
+        """Record elapsed time for a single page."""
+        if duration_sec > 0:
+            self.page_durations.append(duration_sec)
+
+    @property
+    def t_page_avg(self) -> float:
+        """Return the running average duration per page."""
+        if not self.page_durations:
+            return self.default_t_page
+        return sum(self.page_durations) / len(self.page_durations)
+
+    def estimate(self, total_pages: int, processed_pages: int) -> float:
+        """Estimate remaining seconds until completion."""
+        return estimate_ingestion_eta(total_pages, processed_pages, self.t_page_avg)
 
 
 class IngestionJobManager:
@@ -338,7 +390,9 @@ class IngestionJobManager:
                             job.error_message = f"Transient failure (attempt {attempt + 1}): {exc}"
                             job.updated_at = datetime.now(timezone.utc)
                             session.commit()
-                    time.sleep(0.25)
+                    backoff = compute_backoff_with_jitter(attempt)
+                    logger.info("Applying decorrelated backoff: sleeping {:.3f}s before retry {}/{}", backoff, attempt + 1, max_retries)
+                    time.sleep(backoff)
                 else:
                     try:
                         self.vector_store.delete_document(file_hash)
@@ -365,7 +419,7 @@ class IngestionJobManager:
                         session.commit()
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        """Retrieve a single IngestionJob record by ID with active queue position."""
+        """Retrieve a single IngestionJob record by ID with active queue position and dynamic ETA."""
         with SessionLocal() as session:
             job = session.get(IngestionJob, job_id)
             if job is None:
@@ -374,7 +428,14 @@ class IngestionJobManager:
                 self._refresh_queue_positions_in_db(session)
                 session.commit()
                 session.refresh(job)
-            return job.to_dict()
+            res = job.to_dict()
+            if job.status == "PROCESSING" and job.total_pages > 0:
+                res["eta_seconds"] = estimate_ingestion_eta(job.total_pages, job.processed_pages)
+            elif job.status == "COMPLETED":
+                res["eta_seconds"] = 0.0
+            else:
+                res["eta_seconds"] = None
+            return res
 
     def list_jobs(self, limit: int = 50, org_id: str | None = None) -> list[dict[str, Any]]:
         """List recent ingestion jobs ordered newest first with active queue positions."""
