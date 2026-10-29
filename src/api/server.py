@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import math
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ import requests
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -35,9 +36,14 @@ from src.auth.security import seed_demo_accounts
 from src.config import settings
 from src.database.models import QueryTelemetry, User
 from src.database.relational import SessionLocal, get_db, init_db
+from src.database.semantic_cache import get_semantic_cache
 from src.database.vector_store import VectorStore
 from src.embeddings.embedder import LocalEmbedder
-from src.generation.generator import get_generator, synthesize_extractive_answer
+from src.generation.generator import (
+    get_generator,
+    stream_extractive_answer,
+    synthesize_extractive_answer,
+)
 from src.ingestion.pipeline import IngestionPipeline
 from src.jobs.ingestion_worker import AutoIngestWatcher, IngestionJobManager
 from src.retrieval.retriever import Retriever
@@ -567,6 +573,8 @@ async def delete_document(
             status_code=404,
             detail=f"Active document with file_hash '{file_hash}' not found for organization '{current_user.org_id}'.",
         )
+    get_semantic_cache().invalidate_org(current_user.org_id)
+    get_semantic_cache().invalidate_document(file_hash)
     return deleted
 
 
@@ -618,6 +626,37 @@ def _execute_query_sync(
                     "detail": f"Active sliding window contains {len(history_window)} turns.",
                 }
             )
+
+    user_org_id = user.org_id if user else "default_org"
+    user_role = user.role if user else "VIEWER"
+
+    # Fast-path Semantic Query Cache check (<10ms) for stateless queries
+    cache = get_semantic_cache()
+    query_emb = None
+    active_embedder = embedder or (vector_store.embedder if vector_store else None) or (retriever.embedder if retriever else None)
+    if not conv_context and active_embedder:
+        try:
+            query_emb = active_embedder.embed_query(req.query)
+            cached_result = cache.get(
+                req.query, query_emb, org_id=user_org_id, role=user_role, mode=req.mode, threshold=0.96
+            )
+            if cached_result:
+                cached_payload, sim_score = cached_result
+                payload = cached_payload.copy()
+                telem = payload.get("telemetry", {}).copy()
+                telem["cached"] = True
+                telem["cache_similarity"] = round(sim_score, 4)
+                telem["total_latency_ms"] = payload.get("cache_lookup_ms", 1.5)
+                payload["telemetry"] = telem
+                logger.info(
+                    "Semantic cache HIT (cos={:.4f}) for '{}' in {:.2f}ms",
+                    sim_score,
+                    req.query[:40],
+                    telem["total_latency_ms"],
+                )
+                return payload
+        except Exception as exc:
+            logger.warning("Semantic cache lookup encountered error: {}", exc)
 
     # Intent-based Tool Execution
     calc_match = re.search(
@@ -972,7 +1011,7 @@ def _execute_query_sync(
         }
     )
 
-    return {
+    response_data = {
         "answer": answer,
         "citations": citations,
         "abstained": False,
@@ -987,6 +1026,23 @@ def _execute_query_sync(
         "reasoning_trace": reasoning_trace,
         "tool_calls": tool_calls,
     }
+
+    # Store successful synthesis in Semantic Query Cache for instant future retrieval (<10ms)
+    if query_emb is not None and not conv_context:
+        try:
+            cache.set(
+                query_text=req.query,
+                query_emb=query_emb,
+                response_payload=response_data,
+                org_id=user_org_id,
+                role=user_role,
+                mode=req.mode,
+                associated_docs=cited_doc_ids,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist query to semantic cache: {}", exc)
+
+    return response_data
 
 
 @app.post("/api/query")
@@ -1003,6 +1059,321 @@ async def query_pipeline(
     )
     header_key = request.headers.get("X-Gemini-API-Key")
     return await run_in_threadpool(_execute_query_sync, req, current_user, req_id, header_key)
+
+
+@app.post("/api/query/stream")
+async def query_pipeline_stream(
+    req: QueryRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Stream grounded RAG query tokens via Server-Sent Events (SSE) with semantic caching."""
+    ensure_services_initialized()
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="Query text cannot be empty.")
+
+    req_id = (
+        getattr(request.state, "request_id", None)
+        or request.headers.get("X-Request-ID")
+        or str(uuid.uuid4())
+    )
+    header_key = request.headers.get("X-Gemini-API-Key")
+    effective_api_key = req.api_key or header_key
+    provider = req.provider or settings.llm_provider
+
+    try:
+        generator = get_generator(provider, api_key=effective_api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Generator init failed: {exc}") from exc
+
+    async def sse_event_stream():
+        user_org_id = current_user.org_id if current_user else "default_org"
+        user_role = current_user.role if current_user else "VIEWER"
+        cache = get_semantic_cache()
+
+        # Check Semantic Query Cache before retrieval
+        query_emb = None
+        active_embedder = embedder or (vector_store.embedder if vector_store else None) or (retriever.embedder if retriever else None)
+        if not req.session_id and active_embedder:
+            try:
+                query_emb = await run_in_threadpool(active_embedder.embed_query, req.query)
+                cached_hit = cache.get(
+                    req.query, query_emb, org_id=user_org_id, role=user_role, mode=req.mode, threshold=0.96
+                )
+                if cached_hit:
+                    cached_payload, sim_score = cached_hit
+                    cached_answer = cached_payload.get("answer", "")
+                    tokens = re.findall(r"\S+\s*|\s+", cached_answer)
+                    for tok in tokens:
+                        yield f"data: {json.dumps({'token': tok})}\n\n"
+
+                    done_payload = cached_payload.copy()
+                    done_telem = done_payload.get("telemetry", {}).copy()
+                    done_telem["cached"] = True
+                    done_telem["cache_similarity"] = round(sim_score, 4)
+                    done_telem["total_latency_ms"] = cached_payload.get("cache_lookup_ms", 1.5)
+                    done_payload["done"] = True
+                    done_payload["cached"] = True
+                    done_payload["telemetry"] = done_telem
+                    yield f"data: {json.dumps(done_payload)}\n\n"
+                    return
+            except Exception as cache_err:
+                logger.warning("Streaming semantic cache check error: {}", cache_err)
+
+        # Retrieval phase
+        collector = TelemetryCollector(request_id=req_id)
+        rbac_filter = build_qdrant_rbac_filter(current_user) if current_user else None
+
+        conv_context = ""
+        reasoning_trace: list[dict[str, Any]] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+
+        if req.session_id and memory_manager:
+            sess = memory_manager.get_session(req.session_id)
+            if sess and (not current_user or sess.get("org_id") == current_user.org_id):
+                conv_context, history_window = memory_manager.get_context_window(req.session_id, k=3)
+                if conv_context:
+                    reasoning_trace.append(
+                        {
+                            "step": "memory",
+                            "title": "Loaded Conversational Memory",
+                            "detail": f"Active sliding window contains {len(history_window)} turns.",
+                        }
+                    )
+
+        calc_match = re.search(
+            r"(?:calculate|compute|what is|how much is)\s+([\d\.\s\+\-\*\/\(\)\%]+)",
+            req.query,
+            re.IGNORECASE,
+        )
+        if calc_match and any(op in calc_match.group(1) for op in ("+", "-", "*", "/")):
+            expr = calc_match.group(1).strip().rstrip("?.")
+            tc = {"tool": "deterministic_calculator", "arguments": {"expression": expr}}
+            tool_calls.append(tc)
+            res = execute_tool("deterministic_calculator", {"expression": expr})
+            tool_results.append(res)
+            reasoning_trace.append(
+                {
+                    "step": "tool",
+                    "title": "Deterministic Calculator Tool",
+                    "detail": f"Evaluated '{expr}' = {res.get('result')}",
+                }
+            )
+
+        summary_match = re.search(
+            r"(?:summarize|summary of|overview of)\s+([a-zA-Z0-9_\-\.]+\.pdf)",
+            req.query,
+            re.IGNORECASE,
+        )
+        if summary_match:
+            doc_target = summary_match.group(1).strip()
+            tc = {"tool": "document_summary", "arguments": {"filename": doc_target}}
+            tool_calls.append(tc)
+            res = execute_tool("document_summary", {"filename": doc_target}, vector_store=vector_store)
+            tool_results.append(res)
+            reasoning_trace.append(
+                {
+                    "step": "tool",
+                    "title": "Document Summary Tool",
+                    "detail": f"Extracted cover & abstract for '{doc_target}'",
+                }
+            )
+
+        try:
+            outcome = await run_in_threadpool(
+                retriever.retrieve,
+                req.query,
+                initial_k=20,
+                final_k=4,
+                mode=req.mode,
+                query_filter=rbac_filter,
+                user=current_user,
+                collector=collector,
+                enable_multi_query=(req.mode in ("multi_query", "hybrid_rerank") and len(req.query) > 25),
+                enable_crag=True,
+            )
+        except ValueError as exc:
+            yield f"data: {json.dumps({'error': str(exc), 'done': True})}\n\n"
+            return
+
+        top_score = outcome.get("top_score")
+        collector.retrieved_count = len(outcome.get("results", []))
+        collector.top_rerank_score = top_score
+
+        if outcome.get("abstained"):
+            reason = outcome["abstention_reason"]
+            collector.abstained = True
+            collector.abstention_reason = reason
+            collector.finalize_total()
+
+            answer_msg = (
+                "I cannot answer this based on the provided documents. "
+                "No matching context found in the vector database."
+                if reason in {"RBAC_EMPTY_RETRIEVAL", "EMPTY_RETRIEVAL"}
+                else "I cannot answer this based on the provided documents."
+            )
+            for tok in re.findall(r"\S+\s*|\s+", answer_msg):
+                yield f"data: {json.dumps({'token': tok})}\n\n"
+
+            telemetry_dict = collector.to_dict()
+            _record_telemetry_collector(req, current_user, provider, generator, telemetry_dict, [])
+
+            if req.session_id and memory_manager:
+                try:
+                    memory_manager.append_turn(
+                        session_id=req.session_id,
+                        user_text=req.query,
+                        assistant_text=answer_msg,
+                        citations=[],
+                        tokens=0,
+                        latency_ms=collector.total_latency_ms,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to persist abstained turn: {}", exc)
+
+            yield f"data: {json.dumps({'done': True, 'answer': answer_msg, 'citations': [], 'abstained': True, 'abstention_reason': reason, 'mode': req.mode, 'top_score': top_score, 'request_id': collector.request_id, 'telemetry': telemetry_dict, 'session_id': req.session_id, 'reasoning_trace': reasoning_trace, 'tool_calls': tool_calls})}\n\n"
+            return
+
+        context_parts: list[str] = []
+        if conv_context:
+            context_parts.append(f"--- Conversation History ---\n{conv_context}")
+        for tr in tool_results:
+            if tr.get("status") == "success" and "result" in tr:
+                context_parts.append(f"--- Calculator Tool Output ---\n{tr['expression']} = {tr['result']}")
+            elif tr.get("status") == "success" and "summary_excerpt" in tr:
+                context_parts.append(f"--- Document Summary ({tr.get('filename')}) ---\n{tr['summary_excerpt']}")
+        if outcome.get("context"):
+            context_parts.append(outcome["context"])
+
+        synthesis_context = "\n\n".join(context_parts) if context_parts else outcome.get("context", "")
+
+        # Generation streaming
+        t_llm_start = time.perf_counter()
+        provider_status = "live"
+        provider_fallback = False
+        tokens_collected: list[str] = []
+
+        def _sync_stream():
+            try:
+                for tok in generator.stream_generate(req.query, synthesis_context):
+                    yield tok
+            except Exception as stream_err:
+                logger.warning("Stream generator failed: {}; falling back to extractive", stream_err)
+                for tok in stream_extractive_answer(req.query, synthesis_context):
+                    yield tok
+
+        try:
+            for tok in _sync_stream():
+                tokens_collected.append(tok)
+                yield f"data: {json.dumps({'token': tok})}\n\n"
+        except Exception as exc:
+            logger.error("Streaming generation exception: {}", exc)
+            for tok in stream_extractive_answer(req.query, synthesis_context):
+                tokens_collected.append(tok)
+                yield f"data: {json.dumps({'token': tok})}\n\n"
+
+        full_answer = "".join(tokens_collected)
+        collector.record_stage("llm", (time.perf_counter() - t_llm_start) * 1000.0)
+        prompt_tokens = count_tokens(synthesis_context + " " + req.query)
+        completion_tokens = count_tokens(full_answer)
+        collector.prompt_tokens = prompt_tokens
+        collector.completion_tokens = completion_tokens
+        model_name = getattr(generator, "model_name", provider)
+        if not isinstance(model_name, str):
+            model_name = provider
+        collector.estimated_cost_usd = calculate_query_cost(
+            provider, model_name, prompt_tokens, completion_tokens
+        )
+        collector.finalize_total()
+        telemetry_dict = collector.to_dict()
+
+        citations = []
+        cited_doc_ids: list[str] = []
+        for hit in outcome.get("results", []):
+            meta = hit.get("metadata", {})
+            page_start = meta.get("page_number", "?")
+            page_end = meta.get("page_end", page_start)
+            doc_id = meta.get("file_hash") or meta.get("source_pdf", "Unknown")
+            cited_doc_ids.append(str(doc_id))
+            raw_snippet = hit.get("text") or ""
+            clean_snippet = raw_snippet.replace("\ufffd", " ").strip()[:240]
+            citations.append(
+                {
+                    "pdf": meta.get("source_pdf", "Unknown"),
+                    "page": page_start,
+                    "page_end": page_end,
+                    "parent_id": hit.get("parent_id") or meta.get("parent_id"),
+                    "score": round(hit.get("score", 0.0), 3),
+                    "snippet": clean_snippet,
+                    "contextual_header": meta.get("contextual_header", ""),
+                }
+            )
+
+        _record_telemetry_collector(req, current_user, provider, generator, telemetry_dict, cited_doc_ids)
+
+        if req.session_id and memory_manager:
+            try:
+                memory_manager.append_turn(
+                    session_id=req.session_id,
+                    user_text=req.query,
+                    assistant_text=full_answer,
+                    citations=citations,
+                    tokens=prompt_tokens + completion_tokens,
+                    latency_ms=collector.total_latency_ms,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist streaming turn: {}", exc)
+
+        done_response = {
+            "done": True,
+            "answer": full_answer,
+            "citations": citations,
+            "abstained": False,
+            "abstention_reason": None,
+            "mode": req.mode,
+            "top_score": top_score,
+            "request_id": collector.request_id,
+            "telemetry": telemetry_dict,
+            "provider_status": provider_status,
+            "provider_fallback": provider_fallback,
+            "session_id": req.session_id,
+            "reasoning_trace": reasoning_trace,
+            "tool_calls": tool_calls,
+        }
+
+        # Store streamed result in Semantic Cache
+        if query_emb is None and active_embedder:
+            try:
+                query_emb = await run_in_threadpool(active_embedder.embed_query, req.query)
+            except Exception:
+                query_emb = None
+
+        if query_emb is not None and not conv_context:
+            try:
+                cache.set(
+                    query_text=req.query,
+                    query_emb=query_emb,
+                    response_payload=done_response,
+                    org_id=user_org_id,
+                    role=user_role,
+                    mode=req.mode,
+                    associated_docs=cited_doc_ids,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist streaming query to semantic cache: {}", exc)
+
+        yield f"data: {json.dumps(done_response)}\n\n"
+
+    return StreamingResponse(
+        sse_event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Multi-Turn Conversational Session Endpoints ────────────────────────────

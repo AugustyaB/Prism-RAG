@@ -67,6 +67,7 @@ const SVG_ICONS = {
   dollar: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
   layers: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>',
   file: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
+  lightning: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>',
 };
 
 // ---------------------------------------------------------------------------
@@ -1172,6 +1173,11 @@ function buildCitationsElement(citationsArray) {
     const parentId = cit.parent_id ? String(cit.parent_id).slice(0, 10) : 'root';
     const scoreVal = typeof cit.score === 'number' ? cit.score.toFixed(3) : cit.score || '0.000';
     const snippetText = cit.snippet || 'No verbatim snippet available.';
+    const contextualHdr = cit.contextual_header ? String(cit.contextual_header).trim() : '';
+
+    const headerHtml = contextualHdr
+      ? `<div class="citation-contextual-header">${escapeHtml(contextualHdr)}</div>`
+      : '';
 
     chip.innerHTML = `
       ${SVG_ICONS.file}
@@ -1179,7 +1185,10 @@ function buildCitationsElement(citationsArray) {
       <span class="citation-page">${escapeHtml(pageLabel)}</span>
       <span class="citation-parent">#${escapeHtml(parentId)}</span>
       <span class="citation-score">${escapeHtml(scoreVal)}</span>
-      <span class="citation-tooltip">${escapeHtml(snippetText)}</span>
+      <span class="citation-tooltip">
+        ${headerHtml}
+        <div class="citation-snippet-body">${escapeHtml(snippetText)}</div>
+      </span>
     `;
     container.appendChild(chip);
   });
@@ -1189,6 +1198,7 @@ function buildCitationsElement(citationsArray) {
 
 function buildTelemetryRibbon(data) {
   const telemetry = data.telemetry || {};
+  const isCached = data.cached === true || telemetry.cached === true;
   const totalMs = Number(telemetry.total_latency_ms || 0).toFixed(1);
   const embedMs = Number(telemetry.embed_latency_ms || 0).toFixed(1);
   const searchMs = Number(telemetry.search_latency_ms || 0).toFixed(1);
@@ -1200,9 +1210,17 @@ function buildTelemetryRibbon(data) {
   const estCost = Number(telemetry.estimated_cost_usd || 0).toFixed(6);
   const modeUsed = data.mode || state.mode;
 
+  const cachedBadgeHtml = isCached
+    ? `<span class="telemetry-chip telemetry-chip-cached" title="Retrieved instantly from Semantic Query Cache (<10ms)">
+      ${SVG_ICONS.lightning}
+      Cached (&lt;10ms)
+    </span>`
+    : '';
+
   const ribbon = document.createElement('div');
   ribbon.className = 'telemetry-ribbon';
   ribbon.innerHTML = `
+    ${cachedBadgeHtml}
     <span class="telemetry-chip telemetry-total" title="Total Execution Latency">
       ${SVG_ICONS.clock}
       Total: ${escapeHtml(totalMs)}ms
@@ -1414,6 +1432,171 @@ function renderQueryResponse(data) {
   }
 }
 
+async function streamQueryResponse(queryBody, options = {}) {
+  const chatHistory = document.getElementById('chat-history');
+  if (!chatHistory) return null;
+
+  const emptyState = chatHistory.querySelector('.empty-state');
+  if (emptyState) emptyState.remove();
+
+  // Create active AI message container
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg msg-ai streaming-active';
+
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'msg-content-wrapper';
+
+  const cursorSpan = document.createElement('span');
+  cursorSpan.className = 'streaming-cursor';
+
+  msgDiv.appendChild(contentWrapper);
+  msgDiv.appendChild(cursorSpan);
+  chatHistory.appendChild(msgDiv);
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+
+  let accumulatedText = '';
+  let finalData = null;
+
+  try {
+    let res = await fetch('/api/query/stream', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(queryBody),
+    });
+
+    // 404 Recovery: if session expired or not found, re-create session and retry once
+    if (res.status === 404 && typeof ChatSessionController !== 'undefined' && ChatSessionController.activeSessionId) {
+      await ChatSessionController.createNewSession();
+      if (ChatSessionController.activeSessionId) {
+        queryBody.session_id = ChatSessionController.activeSessionId;
+        res = await fetch('/api/query/stream', {
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(queryBody),
+        });
+      }
+    }
+
+    if (!res.ok) {
+      let errData = {};
+      try { errData = await res.json(); } catch (_) {}
+      throw new Error(formatHttpError(res, errData, 'Streaming query request failed'));
+    }
+
+    if (!res.body) {
+      throw new Error('ReadableStream not supported by browser or response.');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const jsonStr = trimmed.slice(6);
+        let event = null;
+        try {
+          event = JSON.parse(jsonStr);
+        } catch (_) {
+          continue;
+        }
+
+        if (event.error) {
+          throw new Error(event.error);
+        }
+
+        if (event.token) {
+          accumulatedText += event.token;
+          contentWrapper.innerHTML = formatMarkdownToHtml(accumulatedText);
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        if (event.done) {
+          finalData = event;
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(trimmed.slice(6));
+          if (event.done) finalData = event;
+          else if (event.token) {
+            accumulatedText += event.token;
+            contentWrapper.innerHTML = formatMarkdownToHtml(accumulatedText);
+          }
+        } catch (_) {}
+      }
+    }
+
+    cursorSpan.remove();
+    msgDiv.classList.remove('streaming-active');
+
+    if (finalData) {
+      // If server responded with abstention
+      if (finalData.abstained === true) {
+        msgDiv.remove();
+        renderQueryResponse(finalData);
+        return finalData;
+      }
+
+      const answerText = finalData.answer || accumulatedText;
+      contentWrapper.innerHTML = formatMarkdownToHtml(answerText);
+
+      if (finalData.provider_fallback === true || finalData.provider_status === 'degraded_extractive') {
+        const fallbackBadge = document.createElement('div');
+        fallbackBadge.className = 'provider-notice-badge';
+        fallbackBadge.innerHTML = `
+          ${SVG_ICONS.alert}
+          <span>Extractive Grounded Synthesis (Local LM Studio Offline)</span>
+        `;
+        msgDiv.insertBefore(fallbackBadge, contentWrapper);
+      }
+
+      if (Array.isArray(finalData.citations) && finalData.citations.length > 0) {
+        const citationsEl = buildCitationsElement(finalData.citations);
+        if (citationsEl) msgDiv.appendChild(citationsEl);
+      }
+
+      const reasoningAccordion = buildReasoningTraceAccordion(finalData.reasoning_trace, finalData.tool_calls);
+      if (reasoningAccordion) {
+        msgDiv.appendChild(reasoningAccordion);
+      }
+
+      msgDiv.appendChild(buildTelemetryRibbon(finalData));
+
+      if (typeof ChatSessionController !== 'undefined' && ChatSessionController.onQueryCompleted) {
+        ChatSessionController.onQueryCompleted(finalData);
+      }
+
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      return finalData;
+    } else {
+      contentWrapper.innerHTML = formatMarkdownToHtml(accumulatedText);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      return { answer: accumulatedText };
+    }
+  } catch (err) {
+    cursorSpan.remove();
+    msgDiv.classList.remove('streaming-active');
+    console.error('SSE streaming error:', err);
+    contentWrapper.innerHTML = `<span class="text-error">Error: ${escapeHtml(err.message || 'Streaming failed')}</span>`;
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    throw err;
+  }
+}
+
 const ChatSessionController = {
   activeSessionId: localStorage.getItem('rag_active_session_id') || null,
   sessionTitle: 'Investigation Session',
@@ -1488,8 +1671,9 @@ const ChatSessionController = {
         headers: getAuthHeaders(),
       });
       if (res.ok) {
-        const sessions = await safeParseJson(res);
-        if (Array.isArray(sessions) && sessions.length > 0) {
+        const raw = await safeParseJson(res);
+        const sessions = Array.isArray(raw) ? raw : (Array.isArray(raw.sessions) ? raw.sessions : []);
+        if (sessions.length > 0) {
           const first = sessions[0];
           this.sessionTitle = first.title || 'Investigation Session';
           await this.loadSession(first.id);
@@ -1539,7 +1723,8 @@ const ChatSessionController = {
         return false;
       }
 
-      const messages = await safeParseJson(res);
+      const raw = await safeParseJson(res);
+      const messages = Array.isArray(raw) ? raw : (Array.isArray(raw.messages) ? raw.messages : []);
       if (Array.isArray(messages)) {
         this.activeSessionId = sessionId;
         localStorage.setItem('rag_active_session_id', sessionId);
@@ -1836,7 +2021,6 @@ document.addEventListener('DOMContentLoaded', () => {
       sendBtn.disabled = true;
 
       appendUserMessage(text);
-      const indicator = appendTypingIndicator();
 
       try {
         const queryBody = {
@@ -1851,54 +2035,12 @@ document.addEventListener('DOMContentLoaded', () => {
           queryBody.session_id = ChatSessionController.activeSessionId;
         }
 
-        let res = await fetch('/api/query', {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(queryBody),
-        });
-
-        // 404 Recovery: if session expired or not found, generate new session and retry once
-        if (res.status === 404 && ChatSessionController.activeSessionId) {
-          await ChatSessionController.createNewSession();
-          if (ChatSessionController.activeSessionId) {
-            queryBody.session_id = ChatSessionController.activeSessionId;
-            res = await fetch('/api/query', {
-              method: 'POST',
-              headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-              body: JSON.stringify(queryBody),
-            });
-          }
-        }
-
-        const data = await safeParseJson(res);
-        if (indicator) indicator.remove();
-
-        if (res.ok) {
-          renderQueryResponse(data);
-          if (metricsDrawer && !metricsDrawer.classList.contains('hidden')) {
-            await loadMetrics();
-          }
-        } else {
-          const chatHistory = document.getElementById('chat-history');
-          if (chatHistory) {
-            const errDiv = document.createElement('div');
-            errDiv.className = 'msg msg-ai text-error';
-            errDiv.textContent = `Error: ${formatHttpError(res, data, 'Query request failed')}`;
-            chatHistory.appendChild(errDiv);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-          }
+        await streamQueryResponse(queryBody);
+        if (metricsDrawer && !metricsDrawer.classList.contains('hidden')) {
+          await loadMetrics();
         }
       } catch (err) {
-        if (indicator) indicator.remove();
         console.error('Query execution error:', err);
-        const chatHistory = document.getElementById('chat-history');
-        if (chatHistory) {
-          const errDiv = document.createElement('div');
-          errDiv.className = 'msg msg-ai text-error';
-          errDiv.textContent = 'Connection error while querying RAG pipeline.';
-          chatHistory.appendChild(errDiv);
-          chatHistory.scrollTop = chatHistory.scrollHeight;
-        }
       } finally {
         sendBtn.disabled = false;
         queryInput.focus();

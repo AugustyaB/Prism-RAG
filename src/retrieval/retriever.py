@@ -64,6 +64,11 @@ class Retriever:
         self.crag_grader = crag_grader or CRAGGrader()
         self.last_retrieval_meta: dict[str, Any] = {}
 
+    @property
+    def embedder(self):
+        """Convenience property exposing the vector store's dense embedder."""
+        return self.vector_store.embedder
+
     def retrieve(
         self,
         query: str,

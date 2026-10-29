@@ -18,8 +18,33 @@ class TextChunk:
     text: str
     char_count: int
     metadata: dict = field(default_factory=dict)
-    # metadata includes: source_pdf, page_number, page_end, chunk_index,
-    # parent_id, parent_text, section_header
+    contextual_text: str = ""
+
+    def __post_init__(self):
+        if not self.contextual_text:
+            self.contextual_text = self._build_contextual_text()
+        if "contextual_text" not in self.metadata:
+            self.metadata["contextual_text"] = self.contextual_text
+        if "contextual_header" not in self.metadata:
+            self.metadata["contextual_header"] = self._build_contextual_header()
+
+    def _build_contextual_header(self) -> str:
+        source = self.metadata.get("source_pdf", "unknown.pdf")
+        p_start = self.metadata.get("page_number", 1)
+        p_end = self.metadata.get("page_end", p_start)
+        page_label = f"{p_start}-{p_end}" if p_end and p_end > p_start else f"{p_start}"
+        return f"[Document: {source} | Page: {page_label}]"
+
+    def _build_contextual_text(self) -> str:
+        header = self._build_contextual_header()
+        return f"{header}\n{self.text}" if self.text else header
+
+    def get_contextual_text(self) -> str:
+        """Return enriched contextual text with situational document & page header."""
+        if not self.contextual_text:
+            self.contextual_text = self._build_contextual_text()
+            self.metadata["contextual_text"] = self.contextual_text
+        return self.contextual_text
 
 
 class SemanticChunker:
@@ -262,6 +287,14 @@ class SemanticChunker:
                 if len(cleaned_child) < 10:
                     continue
 
+                page_label = (
+                    f"{page_start}-{resolved_page_end}"
+                    if resolved_page_end > page_start
+                    else f"{page_start}"
+                )
+                contextual_header = f"[Document: {source_pdf} | Page: {page_label}]"
+                contextual_text = f"{contextual_header}\n{cleaned_child}"
+
                 meta = (base_metadata or {}).copy()
                 meta.update(
                     {
@@ -271,6 +304,8 @@ class SemanticChunker:
                         "chunk_index": chunk_idx,
                         "parent_id": parent_id,
                         "parent_text": parent_text,
+                        "contextual_header": contextual_header,
+                        "contextual_text": contextual_text,
                     }
                 )
                 if section_header:
@@ -281,11 +316,27 @@ class SemanticChunker:
                         text=cleaned_child,
                         char_count=len(cleaned_child),
                         metadata=meta,
+                        contextual_text=contextual_text,
                     )
                 )
                 chunk_idx += 1
 
         return all_children
+
+    @staticmethod
+    def build_contextual_header(
+        source_pdf: str, page_number: int, page_end: int | None = None
+    ) -> str:
+        """Generate structured situational header [Document: {doc} | Page: {page}]."""
+        p_end = page_end or page_number
+        page_label = f"{page_number}-{p_end}" if p_end > page_number else f"{page_number}"
+        return f"[Document: {source_pdf} | Page: {page_label}]"
+
+    def inject_contextual_headers(self, chunks: List[TextChunk]) -> List[TextChunk]:
+        """Ensure all chunks have structured contextual headers enriched."""
+        for chunk in chunks:
+            chunk.get_contextual_text()
+        return chunks
 
     def chunk_pages(
         self, pages: List[Tuple[int, str, str]]

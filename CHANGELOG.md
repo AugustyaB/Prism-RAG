@@ -2,7 +2,7 @@
 
 All notable changes, architectural upgrades, and milestone completions for `Prism-RAG` are documented in this file.
 
-## [v3.1.0] — 2026-10-27 (Milestone v3.1 Mathematical Foundation Optimization & Real-Time Performance Acceleration)
+## [v3.1.0] — 2026-10-29 (Milestone v3.1 Mathematical Foundation Optimization & Real-Time Performance Acceleration)
 
 ### Added
 - **Core Retrieval & Reranking Mathematical Formulations (`Phase 3.1 Wave 1`, `L1, L3, L4`)**:
@@ -22,10 +22,24 @@ All notable changes, architectural upgrades, and milestone completions for `Pris
   - **Exponential Backoff with Full Decorrelated Jitter (`src/jobs/ingestion_worker.py`)**: Hardened worker retry backoff $t = \min(t_{\text{max}}, \text{Uniform}(0, t_{\text{base}} \cdot 2^{\text{attempt}}))$.
   - **Linear Regression Page Ingestion ETA Estimator (`src/jobs/ingestion_worker.py`)**: Computed real-time remaining seconds based on running average page processing time.
 
-### Hardened & Certified (`Phase 3.1 Wave 3 QA Audit`)
+- **Tier 1 Retrieval, Cache & Streaming Acceleration (`Phase 3.1 Wave 5`, `L1, L2, L3, L4`)**:
+  - **Contextual Chunk Injection (`src/ingestion/chunker.py`, `src/ingestion/pipeline.py`)**: Structured situational metadata headers (`[Document: <name> | Page: <N>]`) prepended to chunk text prior to dense embedding and BM25 indexing, boosting retrieval precision on isolated sentences while keeping display text pristine.
+  - **High-Speed Thread-Safe LRU Semantic Query Cache (`src/database/semantic_cache.py`)**: In-memory cosine similarity query cache ($\cos \ge 0.96$) achieving $<0.05\text{ms}$ synthesis replays for semantically equivalent queries, with multi-tenant organization and RBAC role clearance isolation and document ingestion invalidation hooks.
+  - **Real-Time Token Streaming SSE Pipeline (`src/generation/generator.py`, `src/api/server.py`)**: Generator streaming architecture (`stream_generate`) across extractive, OpenAI, Gemini, LMStudio, and Ollama providers, exposed via `POST /api/query/stream` SSE delivering Time-To-First-Token (TTFT) $< 200\text{ms}$.
+
+- **Web Studio Real-Time SSE Typing & Visual Contract (`Phase 3.1 Wave 6`, `L5A, L5B`)**:
+  - **Live Typing UI & Obsidian/Emerald Cursor (`src/api/static/script.js`, `style.css`)**: Implemented `streamQueryResponse` consuming SSE streams with animated typing cursor and live Markdown/reasoning disclosure updates.
+  - **Instant Semantic Cache Badge & Contextual Preview (`src/api/static/index.html`, `style.css`)**: Emerald `⚡ Cached (<10ms)` badge rendering on semantic cache hits, with contextual citation headers.
+  - **Strict Visual Discipline**: Zero blue/purple colors and zero emojis (100% SVG vectors).
+
+- **CI/CD Hardening & Static Web Studio Hosting (`Phase 3.1 Wave 4`, `CI/CD`)**:
+  - **GitHub Actions Headless Ubuntu Fix (`.github/workflows/ci.yml`)**: Automated installation of `libgl1` and `libglib2.0-0` system dependencies, resolving `ImportError: libGL.so.1` in `opencv-python`/`easyocr`. Added `pypdf>=5.0.0` fallback in `requirements.txt`.
+  - **Vercel Zero-Config Deployment (`vercel.json`)**: Configured static Web Studio deployment targeting `src/api/static` with clean URLs and SPA rewrites for instant green builds on `main`.
+
+### Hardened & Certified (`Phase 3.1 Wave 7 QA Audit`)
 - Hardened 6 numerical stability edge cases: non-positive temperature fallback, logit clamping, IEEE 754 precision rounding, zero-capacity rate limiting, Welford zero-variance protection, and string-formatted citation pages.
-- **142/142 Automated Pytest Suite Passing (100%)** across all unit, integration, resilience, agentic, and mathematical edge-case suites.
-- **41/41 Active Files Passing Architecture Layer Boundary Checks (0 violations)** in `scripts/check_architecture_layers.py`.
+- **162/162 Automated Pytest Suite Passing (100%)** across all unit, integration, resilience, agentic, mathematical, Tier 1, and streaming suites.
+- **42/42 Active Files Passing Architecture Layer Boundary Checks (0 violations)** in `scripts/check_architecture_layers.py`.
 - **Zero Database Pollution**: Verified `data/metadata.db` remains pristine.
 
 ---

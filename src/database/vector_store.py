@@ -158,15 +158,21 @@ class VectorStore:
             or ["ADMIN", "MANAGER", "ANALYST", "VIEWER"]
         )
 
-        texts = [chunk.text for chunk in ingestion_result.chunks]
+        # Contextual Chunk Injection: Index enriched contextual text while retaining clean text for UI display
+        indexing_texts = [
+            getattr(chunk, "contextual_text", None)
+            or chunk.metadata.get("contextual_text")
+            or chunk.text
+            for chunk in ingestion_result.chunks
+        ]
 
         logger.info(
-            "Embedding {} child chunks (Dense + Sparse BM25) for {}...",
-            len(texts),
+            "Embedding {} contextual child chunks (Dense + Sparse BM25) for {}...",
+            len(indexing_texts),
             ingestion_result.source_pdf,
         )
-        dense_embeddings = self.embedder.embed_batch(texts)
-        sparse_embeddings = self.sparse_encoder.encode_batch(texts)
+        dense_embeddings = self.embedder.embed_batch(indexing_texts)
+        sparse_embeddings = self.sparse_encoder.encode_batch(indexing_texts)
 
         points: list[models.PointStruct] = []
         for idx, (chunk, dense_vec, (sp_indices, sp_values)) in enumerate(
@@ -182,6 +188,8 @@ class VectorStore:
 
             payload = chunk.metadata.copy()
             payload["text"] = chunk.text
+            payload["contextual_text"] = indexing_texts[idx]
+            payload["contextual_header"] = chunk.metadata.get("contextual_header", "")
             payload["parent_id"] = payload.get(
                 "parent_id", f"{ingestion_result.source_pdf}::parent_{chunk_idx}"
             )

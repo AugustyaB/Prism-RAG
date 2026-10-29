@@ -1,28 +1,45 @@
 """LLM backend integration for generating contextual answers."""
 
+from __future__ import annotations
+
 import json
+import re
 from abc import ABC, abstractmethod
+from typing import Generator
 from loguru import logger
 import requests
 
 from src.config import settings
 
+
 class BaseGenerator(ABC):
     """Abstract base class for LLM generation strategies."""
-    
+
     @abstractmethod
     def generate(self, query: str, context: str) -> str:
         """Generate an answer using the provided context.
-        
+
         Args:
             query: The user query string.
             context: Formatted context blocks from the vector DB.
-            
+
         Returns:
             The generated answer text.
         """
         pass
-        
+
+    def stream_generate(
+        self, query: str, context: str = ""
+    ) -> Generator[str, None, None]:
+        """Yield tokens or text chunks as they are generated.
+
+        Default fallback implementation splits the generated response into tokens.
+        """
+        full_answer = self.generate(query, context)
+        tokens = re.findall(r"\S+\s*|\s+", full_answer)
+        for token in tokens:
+            yield token
+
     def _build_prompt(self, query: str, context: str) -> str:
         """Construct a unified prompt isolating context from instructions."""
         return (
@@ -35,7 +52,9 @@ class BaseGenerator(ABC):
             "Answer:"
         )
 
-    def generate_with_telemetry(self, query: str, context: str) -> tuple[str, int, int]:
+    def generate_with_telemetry(
+        self, query: str, context: str
+    ) -> tuple[str, int, int]:
         """Generate answer while measuring and counting prompt and completion tokens."""
         from src.utils.telemetry import count_tokens
 
@@ -48,18 +67,22 @@ class BaseGenerator(ABC):
 
 class OllamaGenerator(BaseGenerator):
     """Local LLM interaction using Ollama HTTP endpoints."""
-    
+
     def generate(self, query: str, context: str) -> str:
-        prompt = self._build_prompt(query, context)
+        prompt = self._build_prompt(query, context) if context else query
         payload = {
             "model": settings.ollama_model,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
         }
-        
+
         endpoint = f"{settings.ollama_base_url}/api/generate"
-        logger.info(f"Querying Ollama API at {endpoint} with model {settings.ollama_model}")
-        
+        logger.info(
+            "Querying Ollama API at {} with model {}",
+            endpoint,
+            settings.ollama_model,
+        )
+
         try:
             response = requests.post(endpoint, json=payload, timeout=(0.12, 120))
             response.raise_for_status()
@@ -69,31 +92,73 @@ class OllamaGenerator(BaseGenerator):
             logger.error("Ollama query timed out after 120 seconds.")
             return "Error: Local LLM timed out."
         except Exception as e:
-            logger.error(f"Ollama generation failed: {e}")
+            logger.error("Ollama generation failed: {}", e)
             return f"Error connecting to local Ollama service: {e}"
+
+    def stream_generate(
+        self, query: str, context: str = ""
+    ) -> Generator[str, None, None]:
+        prompt = self._build_prompt(query, context) if context else query
+        payload = {
+            "model": settings.ollama_model,
+            "prompt": prompt,
+            "stream": True,
+        }
+        endpoint = f"{settings.ollama_base_url}/api/generate"
+        logger.info(
+            "Streaming query from Ollama API at {} with model {}",
+            endpoint,
+            settings.ollama_model,
+        )
+        try:
+            with requests.post(
+                endpoint, json=payload, stream=True, timeout=(0.12, 120)
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line.decode("utf-8"))
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                        if data.get("done", False):
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.error("Ollama streaming failed: {}", e)
+            yield from stream_extractive_answer(query, context)
 
 
 class LMStudioGenerator(BaseGenerator):
     """Local LLM via LM Studio's OpenAI-compatible API."""
-    
+
     def generate(self, query: str, context: str) -> str:
-        prompt = self._build_prompt(query, context)
+        prompt = self._build_prompt(query, context) if context else query
         payload = {
             "model": settings.lmstudio_model,
             "messages": [
-                {"role": "system", "content": "You are a helpful and precise RAG assistant."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a helpful and precise RAG assistant.",
+                },
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0.3,
-            "stream": False
+            "stream": False,
         }
-        # Normalize base URL: ensure /v1 is in the path
         base = settings.lmstudio_base_url.rstrip("/")
         if not base.endswith("/v1"):
             base += "/v1"
         endpoint = f"{base}/chat/completions"
-        logger.info(f"Querying LM Studio at {endpoint} with model {settings.lmstudio_model}")
-        
+        logger.info(
+            "Querying LM Studio at {} with model {}",
+            endpoint,
+            settings.lmstudio_model,
+        )
+
         try:
             response = requests.post(endpoint, json=payload, timeout=(0.12, 180))
             response.raise_for_status()
@@ -103,44 +168,111 @@ class LMStudioGenerator(BaseGenerator):
             logger.error("LM Studio query timed out after 180 seconds.")
             return "Error: Local LLM timed out."
         except requests.exceptions.ConnectionError:
-            logger.error(f"Cannot connect to LM Studio at {settings.lmstudio_base_url}")
+            logger.error("Cannot connect to LM Studio at {}", settings.lmstudio_base_url)
             return "Error: LM Studio is not running. Start it and load a model."
         except (KeyError, IndexError) as e:
-            logger.error(f"Unexpected LM Studio response format: {e}")
+            logger.error("Unexpected LM Studio response format: {}", e)
             return "Error: Unexpected response from LM Studio."
         except Exception as e:
-            logger.error(f"LM Studio generation failed: {e}")
+            logger.error("LM Studio generation failed: {}", e)
             return f"Error connecting to LM Studio: {e}"
+
+    def stream_generate(
+        self, query: str, context: str = ""
+    ) -> Generator[str, None, None]:
+        prompt = self._build_prompt(query, context) if context else query
+        payload = {
+            "model": settings.lmstudio_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful and precise RAG assistant.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+            "stream": True,
+        }
+        base = settings.lmstudio_base_url.rstrip("/")
+        if not base.endswith("/v1"):
+            base += "/v1"
+        endpoint = f"{base}/chat/completions"
+        logger.info(
+            "Streaming query from LM Studio at {} with model {}",
+            endpoint,
+            settings.lmstudio_model,
+        )
+        try:
+            with requests.post(
+                endpoint, json=payload, stream=True, timeout=(0.12, 180)
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8").strip()
+                    if line_str.startswith("data: "):
+                        chunk_str = line_str[6:].strip()
+                        if chunk_str == "[DONE]":
+                            break
+                        try:
+                            chunk_data = json.loads(chunk_str)
+                            choices = chunk_data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                        except Exception:
+                            continue
+        except Exception as e:
+            logger.error("LM Studio streaming failed: {}", e)
+            yield from stream_extractive_answer(query, context)
 
 
 class GeminiGenerator(BaseGenerator):
     """Cloud LLM interaction utilizing Google GenAI API."""
-    
+
     def __init__(self, api_key: str | None = None):
         super().__init__()
         from google import genai
-        
+
         effective_key = api_key or settings.gemini_api_key
         if not effective_key:
             raise ValueError("GEMINI_API_KEY is missing for Gemini Provider.")
-            
+
         self.api_key = effective_key
         self.client = genai.Client(api_key=effective_key)
         self.model_name = settings.gemini_model
-        
+
     def generate(self, query: str, context: str) -> str:
-        prompt = self._build_prompt(query, context)
-        logger.info(f"Querying Gemini API with model {settings.gemini_model}")
-        
+        prompt = self._build_prompt(query, context) if context else query
+        logger.info("Querying Gemini API with model {}", settings.gemini_model)
+
         try:
             response = self.client.models.generate_content(
-                model=settings.gemini_model,
-                contents=prompt
+                model=settings.gemini_model, contents=prompt
             )
             return response.text
         except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
+            logger.error("Gemini generation failed: {}", e)
             return f"Error querying Gemini API: {e}"
+
+    def stream_generate(
+        self, query: str, context: str = ""
+    ) -> Generator[str, None, None]:
+        prompt = self._build_prompt(query, context) if context else query
+        logger.info("Streaming query from Gemini API with model {}", settings.gemini_model)
+        try:
+            response = self.client.models.generate_content_stream(
+                model=self.model_name, contents=prompt
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            logger.error("Gemini streaming failed: {}", e)
+            yield from stream_extractive_answer(query, context)
 
 
 def synthesize_extractive_answer(query: str, context: str) -> str:
@@ -158,7 +290,11 @@ def synthesize_extractive_answer(query: str, context: str) -> str:
         header = lines[0].rstrip("-").strip() if lines else "Document Excerpt"
         if not header:
             header = "Document Excerpt"
-        content_lines = [l.strip() for l in lines[1:] if l.strip() and not l.startswith("---")]
+        content_lines = [
+            l.strip()
+            for l in lines[1:]
+            if l.strip() and not l.startswith("---")
+        ]
         if content_lines:
             snippet = " ".join(content_lines[:4])
             if len(snippet) > 360:
@@ -177,16 +313,28 @@ def synthesize_extractive_answer(query: str, context: str) -> str:
     return "\n\n".join(summaries)
 
 
-def get_generator(provider: str | None = None, api_key: str | None = None) -> BaseGenerator:
+def stream_extractive_answer(
+    query: str, context: str = ""
+) -> Generator[str, None, None]:
+    """Stream an extractive grounded answer token-by-token."""
+    answer = synthesize_extractive_answer(query, context)
+    tokens = re.findall(r"\S+\s*|\s+", answer)
+    for token in tokens:
+        yield token
+
+
+def get_generator(
+    provider: str | None = None, api_key: str | None = None
+) -> BaseGenerator:
     """Factory method to instantiate the correct generator.
-    
+
     Args:
         provider: 'lmstudio', 'ollama', or 'gemini'. Defaults to settings.llm_provider.
         api_key: Optional runtime API key for cloud providers (e.g., Gemini).
     """
     provider = provider or settings.llm_provider
     provider = provider.lower()
-    
+
     if provider == "lmstudio":
         return LMStudioGenerator()
     elif provider == "gemini":
@@ -194,6 +342,7 @@ def get_generator(provider: str | None = None, api_key: str | None = None) -> Ba
     elif provider == "ollama":
         return OllamaGenerator()
     else:
-        logger.warning(f"Unknown provider '{provider}', falling back to LM Studio.")
+        logger.warning(
+            "Unknown provider '{}', falling back to LM Studio.", provider
+        )
         return LMStudioGenerator()
-

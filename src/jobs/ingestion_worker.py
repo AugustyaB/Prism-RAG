@@ -365,6 +365,14 @@ class IngestionJobManager:
                     self._refresh_queue_positions_in_db(session)
                     session.commit()
 
+                # Invalidate semantic cache for tenant organization after new document ingestion
+                try:
+                    from src.database.semantic_cache import get_semantic_cache
+
+                    get_semantic_cache().invalidate_org(doc_org_id)
+                except Exception as cache_err:
+                    logger.warning("Cache invalidation hook failed: {}", cache_err)
+
                 logger.info(
                     "Job {} COMPLETED in {:.1f}ms ({} pages, {} chunks)",
                     job_id,

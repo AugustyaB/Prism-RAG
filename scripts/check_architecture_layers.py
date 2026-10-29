@@ -37,6 +37,7 @@ ARCHITECTURE_MANIFEST: dict[str, dict[str, object]] = {
     "src/database/vector_store.py": {"layer": "L1", "sections": ["Sec 1", "Sec 3", "Sec 5"]},
     "src/database/models.py": {"layer": "L1", "sections": ["Sec 3", "Sec 4", "Sec 5", "Sec 6"]},
     "src/database/relational.py": {"layer": "L1", "sections": ["Sec 3", "Sec 4", "Sec 5", "Sec 6"]},
+    "src/database/semantic_cache.py": {"layer": "L1", "sections": ["Sec 1", "Sec 4", "Sec 6"]},
 
     # ── LAYER 2: Core Domain, Multi-Tenant RBAC & Async Jobs (L2) ────────────
     "src/jobs/__init__.py": {"layer": "L2", "sections": ["Sec 5"]},

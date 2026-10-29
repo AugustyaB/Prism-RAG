@@ -170,6 +170,7 @@ class IngestionPipeline:
         if progress_callback:
             progress_callback(total_pages, total_pages, "CHUNKING")
         chunks = self.chunker.chunk_pages(extracted_pages)
+        self.chunker.inject_contextual_headers(chunks)
         
         result = IngestionResult(
             source_pdf=source_pdf,

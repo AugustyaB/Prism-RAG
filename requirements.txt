@@ -1,5 +1,6 @@
 # Core PDF processing
 PyMuPDF==1.25.4
+pypdf>=5.0.0
 easyocr==1.7.2
 Pillow==11.1.0
 
